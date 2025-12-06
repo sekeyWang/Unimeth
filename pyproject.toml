@@ -1,0 +1,25 @@
+[project] 
+name = "unimeth"
+version = "0.0.1"
+authors = [{ name = "Shaokai Wang", email = "shaokaiwang@ust.hk" }]
+license = { text = "BSD-3-Clause-Clear license" }
+description = "unimeth"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.4.0",
+    "numpy>=1.26.4",
+    "transformers>=4.53.0",
+    "tqdm>=4.66.5",
+    "accelerate>=1.8.1",
+    "datasets>=2.21.0",
+    "pysam>=0.23.3",
+    "pod5>=0.3.15"
+]
+
+[project.scripts]
+unimeth = "unimeth.unimeth:start"
+
+[build-system]
+requires = ["hatchling"] 
+build-backend = "hatchling.build"
