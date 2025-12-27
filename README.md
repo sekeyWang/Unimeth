@@ -69,6 +69,7 @@ Use `dorado` to basecall and align the nanopore reads (there is already a `demo.
 
 ```bash
 dorado basecaller --device cuda:all --recursive --emit-moves --reference /path/to/reference.fasta /path/to/dorado/models/dna_r10.4.1_e8.2_400bps_sup@v5.0.0 /path/to/subset_18.pod5 > demo.bam
+```
 
 
 ### 3. Methylation Calling with Unimeth
