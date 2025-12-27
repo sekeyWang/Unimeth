@@ -48,15 +48,7 @@ Use unimeth -v to validate it successfully installed if it shows the version.
 
 ## 🚀 Quick Start
 
-### 1. Basecalling and Alignment
-
-Use `dorado` to basecall and align your nanopore reads:
-
-```bash
-dorado basecaller --emit-moves dna_r10.4.1_e8.2_400bps_sup@v5.0.0 pod5/ > calls.bam
-```
-
-### 2. Download model checkpoints and sample data
+### 1. Download model checkpoints and sample data
 
 - **Model**: Download `unimeth_r10.4.1_5kHz_5mC.pt` from [Google Drive](https://drive.google.com/drive/folders/1f8bWVFmbPxL6WqukOUi_BufCEvpOHaxR) to the `checkpoints` folder
 - **Sample Data**: Download the demo dataset using one of the following methods:
@@ -71,6 +63,14 @@ The demo dataset includes:
 - `demo.bam` - aligned reads
 - `subset_18.pod5` - raw signal data
 
+### 2. Basecalling and Alignment
+
+Use `dorado` to basecall and align the nanopore reads (there is already a `demo.bam` file in the demo folder, this step is optional):
+
+```bash
+dorado basecaller --device cuda:all --recursive --emit-moves --reference /path/to/reference.fasta /path/to/dorado/models/dna_r10.4.1_e8.2_400bps_sup@v5.0.0 /path/to/subset_18.pod5 > demo.bam
+
+
 ### 3. Methylation Calling with Unimeth
 
 Run Unimeth to detect methylation (use `--accelerator` to enable multi-GPUs if available):
@@ -80,7 +80,7 @@ unimeth \
 --pod5_dir demo/subset_18.pod5 \
 --bam_dir demo/demo.bam \
 --model_dir checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
---out_dir results/arab.bed \
+--out_dir results/arab.tsv \
 --cpg 1 \
 --chg 1 \
 --chh 1 \
@@ -95,14 +95,17 @@ unimeth \
 Unimeth outputs read-level methylation calls in **tsv** format. A sample output is as follows:
 
 
-| Chromosome | Ref pos| Strand | Dorado pred | Read id| Read pos | Motif tyle  | Pred positive  | Pred negative | Pred(0/1) | . |
-|--------|-----------|----|-------|-----------------------------------|-------|--------|-------------------|----------------------|-------|------|
-| Chr2  | 15338477 | -  | 9    | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 0  | [CpG] | 0.985 | 0.014 | 0 | . |
-| Chr2  | 15338471 | -  | 5    | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 6  | [CHG] | 0.990 | 0.009 | 0 | . |
-| Chr2  | 15338465 | -  | 6    | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 12 | [CHH] | 0.998 | 0.001 | 0 | . |
-| Chr2  | 15338462 | -  | -1   | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 15 | [CHH] | 0.998 | 0.001 | 0 | . |
-| Chr2  | 15338457 | -  | -1   | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 20 | [CHH] | 0.999 | 0.000 | 0 | . |
+| Chromosome | Ref pos| Strand | - | Read id| Read pos | Prob-positive  | Prob-negative | Pred(0/1) | . |
+|--------|-----------|----|-------|-----------------------------------|-------|-------------------|----------------------|-------|------|
+| Chr2  | 15338477 | -  | 9    | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 0  | 0.985 | 0.014 | 0 | . |
+| Chr2  | 15338471 | -  | 5    | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 6  | 0.990 | 0.009 | 0 | . |
+| Chr2  | 15338465 | -  | 6    | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 12 | 0.998 | 0.001 | 0 | . |
+| Chr2  | 15338462 | -  | -1   | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 15 | 0.998 | 0.001 | 0 | . |
+| Chr2  | 15338457 | -  | -1   | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 20 | 0.999 | 0.000 | 0 | . |
 ---
+
+The tsv file can be further processed to generate site-level methylation frequencies using the provided `scripts/call_modification_frequency.py` script, also can be converted to modBAM format using `scripts/generate_5mC_modbam_file.py` (only support 5mC now).
+
 
 ## 🧪 Models
 
@@ -117,7 +120,7 @@ Download models from the [Google Drive](https://drive.google.com/drive/folders/1
 ---
 
 ## 📊 Performance Highlights
-![描述文字](images/plant_result.jpg)
+![description](images/plant_result.jpg)
 - Outperforms DeepPlant, Dorado, Rockfish, and DeepMod2 in cross-species benchmarks.
 - Superior accuracy in repetitive regions (centromeres, transposons).
 - Lower false positive rates in CHH and 6mA contexts.
@@ -138,6 +141,8 @@ For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.0
 | Output Format | Description |
 |---------------|-------------|
 | tsv           | Per-read methylation calls with modified |
+| modBAM        | BAM format with methylation tags (5mC only) |
+| bedmethyl     | Site-level methylation frequencies |
 ---
 
 ## 📚 Citation

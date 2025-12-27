@@ -79,7 +79,11 @@ def inference(args):
                     prob1 = preds[idx].item()
                     prob0 = 1 - prob1
                     probbool = int(prob1 > 0.5)
-                    line = [chr[i], str(ref_pos[i][j]), strand[i], str(labels[i][j]), read_id[i], str(read_pos[i][j]), vocab[methy[idx].item()], str(prob0), str(prob1), str(probbool), '.']
+                    # line = [chr[i], str(ref_pos[i][j]), strand[i], str(labels[i][j]), read_id[i], str(read_pos[i][j]), 
+                    #         vocab[methy[idx].item()], str(prob0), str(prob1), str(probbool), '.']
+                    # disable methy[idx].item() temporarily to make it compatible with post-processing scripts
+                    line = [chr[i], str(ref_pos[i][j]), strand[i], str(labels[i][j]), read_id[i], str(read_pos[i][j]), 
+                            vocab[methy[idx].item()], str(prob0), str(prob1), str(probbool), '.']
                     try:
                         line = '\t'.join(line)
                     except:
