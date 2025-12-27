@@ -91,7 +91,7 @@ unimeth \
 --dorado_version 0.71
 ```
 
-### 3. Output
+#### Output
 
 Unimeth outputs read-level methylation calls in **tsv** format. A sample output is as follows:
 
