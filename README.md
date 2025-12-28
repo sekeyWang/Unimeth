@@ -14,7 +14,7 @@
 
 ## 🧬 Features
 
-- **Unified Detection**: Simultaneously detects 5mC (CpG, CHG, CHH) and 6mA methylation.
+- **Unified Detection**: Supports DNA 5mC (CpG, CHG, CHH) and 6mA methylation.
 - **Multi-Chemistry Support**: Compatible with R9.4.1, R10.4.1 4kHz, and R10.4.1 5kHz chemistries.
 - **Patch-Based Transformer**: Captures contextual dependencies between neighboring methylation sites.
 - **Multi-Phase Training**: Pre-training, read-level fine-tuning, and site-level calibration for robust performance.
@@ -30,7 +30,7 @@
 - Python 3.12+
 - [Dorado](https://github.com/nanoporetech/dorado) for basecalling
 
-### Install from Source
+### Option 1. Install from Source
 
 ```bash
 git clone https://github.com/sekeyWang/unimeth.git
@@ -42,9 +42,20 @@ conda activate unimeth
 pip install unimeth .
 
 ```
+
+### Option 2. Install via pip
+
+```bash
+conda create -n unimeth python=3.12
+conda activate unimeth
+
+pip install unimeth
+```
+
 Use unimeth -v to validate it successfully installed if it shows the version.
 
 ---
+
 
 ## 🚀 Quick Start
 
