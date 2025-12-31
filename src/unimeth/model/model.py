@@ -3,8 +3,8 @@ from torch import Tensor, nn
 from torch.nn import CrossEntropyLoss
 from transformers import BartForConditionalGeneration, BartConfig
 from transformers.models.bart.modeling_bart import shift_tokens_right
-from unimeth.model.module import Processor, PositionalEncoding
-from unimeth.config import modelconfig
+from model.module import Processor, PositionalEncoding
+from config import modelconfig
 
 class Basecaller(nn.Module):
     def __init__(self, mode, plant=False):

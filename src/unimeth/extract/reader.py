@@ -3,10 +3,10 @@
 '''
 
 import pod5 as p5
-from unimeth.util import local_print, state
+from util import local_print, state
 from torch.utils.data import get_worker_info
-from unimeth.extract.feature import Extractor_raw
-from unimeth.extract.bam import Read_indexed_bam
+from extract.feature import Extractor_raw
+from extract.bam import Read_indexed_bam
 from tqdm import tqdm
 
 class Reader_raw:

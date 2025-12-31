@@ -1,7 +1,7 @@
 import os
 import pysam
 import pickle
-from unimeth.util import local_print
+from util import local_print
 
 class Read_indexed_bam:
     def __init__(self, bam_dir, force_write = False):

@@ -1,4 +1,4 @@
-from unimeth.config import vocab
+from config import vocab
 
 from accelerate.state import PartialState
 state = PartialState()

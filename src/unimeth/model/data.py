@@ -1,10 +1,10 @@
 import os
 import torch
 from torch.utils.data import IterableDataset, Dataset
-from unimeth.extract.reader import Reader_raw
-from unimeth.extract.processors import ReadProcessor
-from unimeth.extract.bam import Read_indexed_bam
-from unimeth.util import local_print
+from extract.reader import Reader_raw
+from extract.processors import ReadProcessor
+from extract.bam import Read_indexed_bam
+from util import local_print
 from itertools import zip_longest
 
 class MultiDataset(IterableDataset):

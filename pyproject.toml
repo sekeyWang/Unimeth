@@ -3,7 +3,7 @@ name = "unimeth"
 version = "0.0.2"
 authors = [{ name = "Shaokai Wang", email = "shaokaiwang@ust.hk" }]
 license = { text = "BSD-3-Clause-Clear license" }
-description = "unimeth"
+description = "Unimeth - Unified DNA Methylation Detection from Nanopore Reads"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-unimeth = "unimeth.unimeth:start"
+unimeth = "unimeth.cli:start"
 
 [build-system]
 requires = ["hatchling"] 

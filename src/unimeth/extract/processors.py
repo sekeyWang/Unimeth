@@ -1,5 +1,5 @@
-from unimeth.extract.patcher import Patcher
-from unimeth.config import tokenizer
+from extract.patcher import Patcher
+from config import tokenizer
 import numpy as np
 
 class ReadProcessor:

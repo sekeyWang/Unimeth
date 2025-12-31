@@ -1,11 +1,11 @@
 from torch.utils.data import DataLoader
-from unimeth.model.data import collate_fn_inference, RawDataset
+from model.data import collate_fn_inference, RawDataset
 import torch
 from accelerate import Accelerator
 from accelerate.utils import DataLoaderConfiguration
-from unimeth.model.model import Basecaller
-from unimeth.config import defaultconfig, vocab
-from unimeth.util import local_print
+from model.model import Basecaller
+from config import defaultconfig, vocab
+from util import local_print
 from pathlib import Path
 
 def get_result(decoder_input_ids, logits, patch_pos): 

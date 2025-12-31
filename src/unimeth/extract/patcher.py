@@ -1,5 +1,5 @@
 import numpy as np
-from unimeth.config import methy_types, tokenizer
+from config import methy_types, tokenizer
 
 class Patcher:
     def __init__(self, args):
