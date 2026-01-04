@@ -8,13 +8,13 @@
 [![PyPI-Downloads](https://static.pepy.tech/badge/unimeth)](https://pepy.tech/project/unimeth/)
 
 ![description](images/workflow.jpg)
-**Unimeth** is a unified deep learning framework for accurate and efficient detection of DNA methylation (5mC, 6mA) from Oxford Nanopore sequencing data. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz), handles both plant and mammalian genomes, and achieves state-of-the-art performance across diverse genomic contexts.
+**Unimeth** is a unified deep learning framework for accurate and efficient detection of DNA methylation (5mC, 6mA) from Oxford Nanopore sequencing data. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz), handles plant, mammalian, and bacterial genomes, and achieves state-of-the-art performance across diverse genomic contexts.
 
 ---
 
 ## 🧬 Features
 
-- **Unified Detection**: Supports DNA 5mC (CpG, CHG, CHH) and 6mA methylation.
+- **Unified Detection**: Supports DNA 5mC (CpG, CHG, CHH) and 6mA detection.
 - **Multi-Chemistry Support**: Compatible with R9.4.1, R10.4.1 4kHz, and R10.4.1 5kHz chemistries.
 - **Patch-Based Transformer**: Captures contextual dependencies between neighboring methylation sites.
 - **Multi-Phase Training**: Pre-training, read-level fine-tuning, and site-level calibration for robust performance.
@@ -33,7 +33,7 @@
 ### Option 1. Install from Source
 
 ```bash
-git clone https://github.com/sekeyWang/unimeth.git
+git clone https://github.com/sekeyWang/Unimeth.git
 cd unimeth
 
 conda create -n unimeth python=3.12
@@ -79,7 +79,10 @@ The demo dataset includes:
 Use `dorado` to basecall and align the nanopore reads (there is already a `demo.bam` file in the demo folder, this step is optional):
 
 ```bash
-dorado basecaller --device cuda:all --recursive --emit-moves --reference /path/to/reference.fasta /path/to/dorado/models/dna_r10.4.1_e8.2_400bps_sup@v5.0.0 /path/to/subset_18.pod5 > demo.bam
+dorado basecaller --device cuda:all --recursive --emit-moves \
+--reference /path/to/reference.fasta \
+/path/to/dorado/models/dna_r10.4.1_e8.2_400bps_sup@v5.0.0 \
+/path/to/subset_18.pod5 > demo.bam
 ```
 
 
