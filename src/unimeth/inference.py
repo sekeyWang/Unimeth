@@ -1,12 +1,11 @@
-from torch.utils.data import DataLoader
-from model.data import collate_fn_inference, RawDataset
 import torch
 from accelerate import Accelerator
 from accelerate.utils import DataLoaderConfiguration
+
+from model.data import collate_fn_inference, RawDataset
 from model.model import Basecaller
 from config import defaultconfig, vocab
 from util import local_print
-from pathlib import Path
 
 def get_result(decoder_input_ids, logits, patch_pos): 
     num_data = logits.shape[0]
@@ -32,6 +31,7 @@ def inference(args):
     dataset = RawDataset(pod5_dir=args.pod5_dir,bam_dir=args.bam_dir,args=args)
 
     # 创建 DataLoader
+    from torch.utils.data import DataLoader
     dataloader = DataLoader(
         dataset,
         collate_fn=collate_fn_inference,
@@ -45,7 +45,8 @@ def inference(args):
     model.load_state_dict(torch.load(args.model_dir), strict=True)
     model.eval()
     model = accelerator.prepare(model)
-    
+
+    from pathlib import Path
     file_path = Path(args.out_dir)
     file_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -79,9 +80,6 @@ def inference(args):
                     prob1 = preds[idx].item()
                     prob0 = 1 - prob1
                     probbool = int(prob1 > 0.5)
-                    # line = [chr[i], str(ref_pos[i][j]), strand[i], str(labels[i][j]), read_id[i], str(read_pos[i][j]), 
-                    #         vocab[methy[idx].item()], str(prob0), str(prob1), str(probbool), '.']
-                    # disable methy[idx].item() temporarily to make it compatible with post-processing scripts
                     line = [chr[i], str(ref_pos[i][j]), strand[i], str(labels[i][j]), read_id[i], str(read_pos[i][j]), 
                             vocab[methy[idx].item()], str(prob0), str(prob1), str(probbool), '.']
                     try:

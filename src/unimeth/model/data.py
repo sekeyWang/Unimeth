@@ -1,19 +1,9 @@
 import os
 import torch
-from torch.utils.data import IterableDataset, Dataset
+from torch.utils.data import IterableDataset
 from extract.reader import Reader_raw
 from extract.processors import ReadProcessor
 from extract.bam import Read_indexed_bam
-from util import local_print
-from itertools import zip_longest
-
-class MultiDataset(IterableDataset):
-    def __init__(self, generators):
-        self.generators = generators
-    def __iter__(self):
-        for binned_data in zip_longest(*self.generators, fillvalue=None):
-            for data in binned_data:
-                yield data
     
 class RawDataset(IterableDataset):
     def __init__(self, pod5_dir, bam_dir, args, negative_thres=0, positive_thres=100):
@@ -36,27 +26,16 @@ class RawDataset(IterableDataset):
                     for binned_data in self.binning.get_data(dataset):
                         yield binned_data
         yield from self.binning.flush()
-
-class RawValDataset(Dataset):
-    def __init__(self, pod5_dirs, bam_dirs, args):
-        if len(pod5_dirs) != len(bam_dirs):
-            print('Need same number of pod5 files and bam files')
-        self.datas = []
-        total_max = 5000
-        per_max = total_max // len(pod5_dirs)
-        for i in range(len(pod5_dirs)):
-            dataset = RawDataset(pod5_dirs[i], bam_dirs[i], args)    
-            for num, x in enumerate(dataset):
-                self.datas.append(x)
-                if num > per_max:
-                    break
-        local_print(f'Validation data: {len(self.datas)}')
-
-    def __getitem__(self, idx):
-        return self.datas[idx]
-
-    def __len__(self):
-        return len(self.datas)
+        '''
+            for feature in reader.get_features():
+                for dataset in self.read_processor.get_datasets(feature):
+                    l = len(dataset['signals'])
+                    if l < 50 or l >= 7500:
+                        continue
+                    for binned_data in self.binning.get_data(dataset):
+                        yield binned_data
+        yield from self.binning.flush()
+        '''
 
 
 def collate_fn(mode, datas):
@@ -87,37 +66,10 @@ def collate_fn(mode, datas):
             'chr': [sample['chr'] for sample in datas],
             'strand': [sample['strand'] for sample in datas],
         }
-    elif mode == 'finetune':
-        padded_label = torch.ones_like(padded_decoder_inputs) * -100
-        padded_weight = torch.ones_like(padded_decoder_inputs)
-        for i, sample in enumerate(datas):
-            patch_pos, label, weight = sample['patch_pos'], sample['labels'], sample['weight']
-            for j in range(len(patch_pos)):
-                pos, label_pos, weight_pos = patch_pos[j], label[j], weight[j]
-                padded_label[i, pos] = label_pos
-                padded_weight[i, pos] = weight_pos
-        ret = {
-            'signals': padded_signals,
-            'encoder_mask': padded_encoder_masks,
-            'decoder_input_ids': padded_decoder_inputs,
-            'signal_pos': padded_signal_pos,
-            'labels': padded_label,
-            'weights': padded_weight,
-        }
-    elif mode == 'pretrain':
-        ret = {
-            'signals': padded_signals,
-            'encoder_mask': padded_encoder_masks,
-            'labels': padded_decoder_inputs,
-            'signal_pos': padded_signal_pos,
-        }
     return ret
 
 import functools
-collate_fn_pretrain = functools.partial(collate_fn, 'pretrain')
-collate_fn_finetune = functools.partial(collate_fn, 'finetune')
 collate_fn_inference = functools.partial(collate_fn, 'inference')
-
 
 class Binning:
 

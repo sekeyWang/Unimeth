@@ -39,7 +39,7 @@ cd unimeth
 conda create -n unimeth python=3.12
 conda activate unimeth
 
-pip install unimeth .
+pip install -e unimeth .
 
 ```
 

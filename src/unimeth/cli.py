@@ -26,7 +26,6 @@ def start():
     
     cmd.extend([unimeth_path])
     cmd.extend(training_args)
-    print(cmd)
     subprocess.run(cmd)
 
 if __name__ == "__main__":

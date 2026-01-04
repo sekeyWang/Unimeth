@@ -41,6 +41,7 @@ class Basecaller(nn.Module):
             labels=labels,
             decoder_input_ids=decoder_input_ids,
             decoder_attention_mask=decoder_mask,
+            use_cache=False,
         )
         return outputs
     
