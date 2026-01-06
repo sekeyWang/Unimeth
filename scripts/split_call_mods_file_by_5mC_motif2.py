@@ -136,6 +136,9 @@ def _split_callmods_file(cmfile, ref):
             chrom = words[0]
             pos = int(words[1])
             strand = words[2]
+            if pos < 0:
+                print("invalid pos: {}, line: {}".format(pos, line.strip()))
+                continue
             if strand == "+":
                 seq = contigs[chrom][pos:(pos+3)]
             else:

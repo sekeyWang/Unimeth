@@ -10,6 +10,7 @@ import tabix
 import multiprocessing as mp
 from multiprocessing import Queue
 
+import gzip
 import pybedtools
 # from generate_per_read_modscall import _generate_sorted_per_read_calls
 
@@ -63,7 +64,7 @@ def _generate_per_read_calls(per_readsite, output):
     cur_locs = set()
     for line in rf:
         words = line.strip().split("\t")
-        holeid, loc, prob_1 = words[3], int(words[4]), float(words[7])
+        holeid, loc, prob_1 = words[4], int(words[5]), float(words[8])
         if holeid != holeid_curr:
             if len(holeid_info) > 0:
                 holeid_info = sorted(holeid_info, key=lambda x: x[0])
