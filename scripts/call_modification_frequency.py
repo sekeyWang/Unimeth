@@ -31,10 +31,10 @@ class ModRecord:
         self._pos_in_strand = int(fields[3]) if fields[3] != '.' else -1
         self._readname = fields[4]
         self._read_loc = fields[5]
-        self._prob_0 = float(fields[6])
-        self._prob_1 = float(fields[7])
-        self._called_label = int(fields[8])
-        self._kmer = fields[9]
+        self._prob_0 = float(fields[7])
+        self._prob_1 = float(fields[8])
+        self._called_label = int(fields[9])
+        self._kmer = fields[10]
 
     def is_record_callable(self, prob_threshold):
         if abs(self._prob_0 - self._prob_1) < prob_threshold:
@@ -232,6 +232,8 @@ def calculate_mods_frequency(mods_files, prob_cf, methyl_threshold=0.5,
                 words = line.strip().split("\t")
                 mod_record = ModRecord(words)
                 if contig_name is not None and mod_record._chromosome != contig_name:
+                    continue
+                if mod_record._pos < 0:
                     continue
                 # check if the site is in targeted motifs
                 if contigs is not None and motifset is not None:
@@ -536,10 +538,10 @@ def main():
     
     parser.add_argument('--bed', action='store_true', default=False, help="save the result in bedMethyl format")
     parser.add_argument('--sort', action='store_true', default=False, help="sort items in the result")
-    parser.add_argument('--prob_cf', type=float, action="store", required=False, default=0.5,
+    parser.add_argument('--prob_cf', type=float, action="store", required=False, default=0.0,
                         help='this is to remove ambiguous calls. '
                              'if abs(prob1-prob0)>=prob_cf, then we use the call. e.g., proc_cf=0 '
-                             'means use all calls. range [0, 1], default 0.5.')
+                             'means use all calls. range [0, 1], default 0.0.')
     parser.add_argument('--file_uid', type=str, action="store", required=False, default=None,
                         help='a unique str which all input files has, this is for finding all input files and ignoring '
                              'the un-input-files in a input directory. if input_path is a file, ignore this arg.')
