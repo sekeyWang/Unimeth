@@ -4,6 +4,8 @@ Unified argument parsing configuration for all modes.
 import argparse
 import datetime
 
+from unimeth import __version__
+
 
 
 def create_argument_parser(mode: str) -> argparse.ArgumentParser:
@@ -109,6 +111,8 @@ Model Types:
     
     # Inference-specific arguments
     if mode == 'inference':
+        parser.add_argument('-v', '--version', action='version',
+                           version=f'unimeth-infer {__version__}')
         parser.add_argument('--out_dir', '--out', dest='out_dir', type=str,
                            help='Output file path (.txt for TSV, .bam for BAM)')
         parser.add_argument('--limit', type=int, default=None, 

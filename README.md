@@ -8,7 +8,7 @@
 [![PyPI-Downloads](https://static.pepy.tech/badge/unimeth)](https://pepy.tech/project/unimeth/)
 
 <!-- Workflow figure temporarily hidden while it is being updated: ![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/workflow.jpg) -->
-**Unimeth** is a unified deep learning framework for detecting DNA methylation (5mC, 6mA) from Oxford Nanopore reads. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz), handles plant, mammalian, and bacterial genomes, and achieves state-of-the-art performance across diverse genomic contexts.
+**Unimeth** is a unified deep learning framework for detecting DNA methylation (5mC, 6mA) from Oxford Nanopore reads. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz) and methylation calling across plant, mammalian, and bacterial genomes.
 
 ---
 
