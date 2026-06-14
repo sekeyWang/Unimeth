@@ -28,18 +28,27 @@ def create_argument_parser(mode: str) -> argparse.ArgumentParser:
     epilogs = {
         'inference': '''
 Examples:
-  # TSV output with default model
-  accelerate launch --num_processes 8 src/inference.py \\
-      --pod5_dir data.pod5 --bam_dir data.bam \\
-      --model_dir model.bin --out_dir results.txt \\
-      --cpg 1 --chg 1 --chh 1
+  # TSV output with the default model
+  unimeth-infer \\
+      --pod5 data.pod5 --bam data.bam \\
+      --model model.pt --out results.tsv \\
+      --cpg 1 --chg 1 --chh 1 \\
+      --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
 
-  # BAM output with distilled model + Flash Attention
-  accelerate launch --num_processes 8 src/inference.py \\
-      --pod5_dir data.pod5 --bam_dir data.bam \\
-      --out_dir results.bam --output_format bam \\
+  # Multi-GPU TSV output
+  accelerate launch --num_processes 8 -m unimeth.inference \\
+      --pod5 data.pod5 --bam data.bam \\
+      --model model.pt --out results.tsv \\
+      --cpg 1 --chg 1 --chh 1 \\
+      --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
+
+  # BAM output with the distilled model
+  unimeth-infer \\
+      --pod5 data.pod5 --bam data.bam \\
+      --model distilled_model.pt --out results.bam --output_format bam \\
       --model_type distilled \\
-      --cpg 1 --batch_size 512
+      --cpg 1 --batch_size 512 \\
+      --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
 
 Model Types:
   default   - 100M params, d_model=384, 12 layers, 4x CNN downsample
@@ -54,13 +63,13 @@ Model Types:
     )
     
     # Common data arguments
-    parser.add_argument('--bam_dir', type=str, 
-                        help='Path to BAM file or directory (must contain mv/ts tags)')
-    parser.add_argument('--pod5_dir', type=str, 
-                        help='Path to POD5 directory containing raw signal files')
-    parser.add_argument('--train_pod5_dir', type=str, 
+    parser.add_argument('--bam_dir', '--bam', dest='bam_dir', type=str,
+                        help='Path to BAM file (must contain mv/ts tags)')
+    parser.add_argument('--pod5_dir', '--pod5', dest='pod5_dir', type=str,
+                        help='Path to POD5 file or directory containing raw signal files')
+    parser.add_argument('--train_pod5_dir', '--train_pod5', dest='train_pod5_dir', type=str,
                         help='Path to training POD5 directory (training modes)')
-    parser.add_argument('--val_pod5_dir', type=str, 
+    parser.add_argument('--val_pod5_dir', '--val_pod5', dest='val_pod5_dir', type=str,
                         help='Path to validation POD5 directory (training modes)')
     parser.add_argument('--chr', type=str, default='|', 
                         help='Chromosome filter: "|"=all, "|Chr1,Chr2"=include only, "Chr1,Chr2|"=exclude')
@@ -70,10 +79,10 @@ Model Types:
                         help='Enable length-based binning for DataLoader (1=yes, 0=no). Disabling reduces latency but may increase padding.')
     
     # Common model arguments
-    parser.add_argument('--model_dir', type=str, 
-                        help='Path to model checkpoint (pytorch_model.bin)')
+    parser.add_argument('--model_dir', '--model', dest='model_dir', type=str,
+                        help='Path to model checkpoint (.pt, .bin, or pytorch_model.bin)')
     parser.add_argument('--batch_size', type=int, 
-                        help='Batch size per GPU (default: 256 for inference)')
+                        help='Batch size per GPU (default: 512 after config merge)')
     parser.add_argument('--pore_type', type=str, choices=['R9.4.1', 'R10.4.1'],
                         help='Nanopore chemistry type')
     parser.add_argument('--frequency', type=str, choices=['4khz', '5khz'],
@@ -100,21 +109,21 @@ Model Types:
     
     # Inference-specific arguments
     if mode == 'inference':
-        parser.add_argument('--out_dir', type=str, 
+        parser.add_argument('--out_dir', '--out', dest='out_dir', type=str,
                            help='Output file path (.txt for TSV, .bam for BAM)')
         parser.add_argument('--limit', type=int, default=None, 
                            help='Process only first N batches (for quick testing)')
         parser.add_argument('--output_format', type=str, choices=['tsv', 'bam', 'both'],
                            default='tsv', help='Output format: tsv (default), bam, or both (dual output for verification)')
-        parser.add_argument('--tsv_out_dir', type=str, default=None,
+        parser.add_argument('--tsv_out_dir', '--tsv_out', dest='tsv_out_dir', type=str, default=None,
                            help='TSV output path when --output_format both (defaults to --out_dir)')
-        parser.add_argument('--bam_out_dir', type=str, default=None,
+        parser.add_argument('--bam_out_dir', '--bam_out', dest='bam_out_dir', type=str, default=None,
                            help='BAM output path when --output_format both (defaults to --out_dir)')
         parser.add_argument('--model_type', type=str, choices=['default', 'distilled'],
                            default='default', 
                            help='Model architecture: default (100M params) or distilled (62M params, faster)')
         parser.add_argument('--num_workers', type=int, default=8,
-                           help='Number of CPU workers per GPU for data loading (default: 8, total=8×num_gpus)')
+                           help='Number of CPU workers per GPU for data loading (default: 8, total=8 x num_gpus)')
         parser.add_argument('--show_reading_progress', action='store_true',
                            help='Show tqdm progress bar for data reading (default: disabled for clean output)')
         # BAM output: read-level flush control
