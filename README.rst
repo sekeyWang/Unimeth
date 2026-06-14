@@ -1,20 +1,21 @@
-unimeth
-========
-
-
 Changelog
--------------
+=========
+
+v0.2.0
+------
+- Add BAM output support (``--output_format bam/tsv/both``)
+- Switch attention implementation to PyTorch SDPA (built-in, no extra dependency)
+- Add minimum version constraints to all dependencies
+- Refactor BAM site prediction to sequential scan for better performance
 
 v0.0.3
-----------
-support multi-gpus
-
+------
+- Support multi-GPUs
 
 v0.0.2
-----------
-catch up pypi release
-
+------
+- Catch up PyPI release
 
 v0.0.1
-----------
-initialize project
+------
+- Initialize project

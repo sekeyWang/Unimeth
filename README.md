@@ -1,13 +1,13 @@
 # Unimeth: A Unified Transformer Framework for DNA Methylation Detection from Nanopore Reads
 
 [![License](https://img.shields.io/badge/license-BSD--3--Clause--Clear-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![DOI](https://img.shields.io/badge/DOI-10.64898/2025.12.05.692231-brightgreen)](https://doi.org/10.64898/2025.12.05.692231)
 
 [![PyPI-version](https://img.shields.io/pypi/v/unimeth)](https://pypi.org/project/unimeth/)
 [![PyPI-Downloads](https://static.pepy.tech/badge/unimeth)](https://pepy.tech/project/unimeth/)
 
-![description](images/workflow.jpg)
+![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/workflow.jpg)
 **Unimeth** is a unified deep learning framework for accurate and efficient detection of DNA methylation (5mC, 6mA) from Oxford Nanopore sequencing data. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz), handles plant, mammalian, and bacterial genomes, and achieves state-of-the-art performance across diverse genomic contexts.
 
 ---
@@ -34,12 +34,12 @@
 
 ```bash
 git clone https://github.com/sekeyWang/Unimeth.git
-cd unimeth
+cd Unimeth
 
 conda create -n unimeth python=3.12
 conda activate unimeth
 
-pip install -e unimeth .
+pip install -e .
 
 ```
 
@@ -91,11 +91,13 @@ dorado basecaller --device cuda:all --recursive --emit-moves \
 Run Unimeth to detect methylation (use `--accelerator` to enable multi-GPUs if available):
 
 ```bash
+# TSV output (default)
 unimeth \
 --pod5_dir demo/subset_18.pod5 \
 --bam_dir demo/demo.bam \
 --model_dir checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
 --out_dir results/arab.tsv \
+--output_format tsv \
 --cpg 1 \
 --chg 1 \
 --chh 1 \
@@ -105,9 +107,26 @@ unimeth \
 --dorado_version 0.71
 ```
 
+```bash
+# modBAM output
+unimeth \
+--pod5_dir demo/subset_18.pod5 \
+--bam_dir demo/demo.bam \
+--model_dir checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
+--out_dir results/arab.bam \
+--output_format bam \
+--cpg 1 \
+--batch_size 256 \
+--pore_type R10.4.1 \
+--frequency 5khz \
+--dorado_version 0.71
+```
+
+Use `--output_format both` to generate TSV and modBAM simultaneously.
+
 #### Output
 
-Unimeth outputs read-level methylation calls in **tsv** format. A sample output is as follows:
+Unimeth outputs read-level methylation calls in **tsv** or **modBAM** format. A sample TSV output is as follows:
 
 
 | Chromosome | Ref pos| Strand | - | Read id| Read pos | Prob-positive  | Prob-negative | Pred(0/1) | . |
@@ -135,7 +154,7 @@ Download models from the [Google Drive](https://drive.google.com/drive/folders/1
 ---
 
 ## 📊 Performance Highlights
-![description](images/plant_result.jpg)
+![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/plant_result.jpg)
 - Outperforms DeepPlant, Dorado, Rockfish, and DeepMod2 in cross-species benchmarks.
 - Superior accuracy in repetitive regions (centromeres, transposons).
 - Lower false positive rates in CHH and 6mA contexts.
@@ -155,9 +174,10 @@ For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.0
 
 | Output Format | Description |
 |---------------|-------------|
-| tsv           | Per-read methylation calls with modified |
-| modBAM        | BAM format with methylation tags (5mC only) |
-| bedmethyl     | Site-level methylation frequencies |
+| tsv           | Per-read methylation calls (`--output_format tsv`, default) |
+| modBAM        | BAM with MM/ML methylation tags (`--output_format bam`) |
+| both          | TSV and modBAM simultaneously (`--output_format both`) |
+| bedmethyl     | Site-level methylation frequencies (post-processing) |
 ---
 
 ## 📚 Citation
