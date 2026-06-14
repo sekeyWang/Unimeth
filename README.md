@@ -123,7 +123,7 @@ The examples set `--batch_size 256` for conservative demo memory usage; if omitt
 
 #### Output
 
-Unimeth outputs read-level methylation calls in **tsv** or **modBAM** format. A sample TSV output is as follows:
+Unimeth outputs read-level methylation calls in **TSV** or **modBAM** format. A sample TSV output is as follows:
 
 
 | Chromosome | Ref pos | Strand | Label | Read id | Read pos | Methylation type | Prob-negative | Prob-positive | Pred(0/1) | . |

@@ -41,6 +41,26 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
         self.assertEqual(args.model_dir, "model.pt")
         self.assertEqual(args.out_dir, "predictions.tsv")
 
+    def test_inference_help_omits_training_pod5_options(self):
+        help_text = create_argument_parser("inference").format_help()
+
+        self.assertNotIn("--train_pod5_dir", help_text)
+        self.assertNotIn("--train_pod5", help_text)
+        self.assertNotIn("--val_pod5_dir", help_text)
+        self.assertNotIn("--val_pod5", help_text)
+
+    def test_training_pod5_aliases_stay_available_for_training_modes(self):
+        for mode in ["pretrain", "finetune", "calibration"]:
+            with self.subTest(mode=mode):
+                parser = create_argument_parser(mode)
+                args = parser.parse_args([
+                    "--train_pod5", "train.pod5",
+                    "--val_pod5", "val.pod5",
+                ])
+
+                self.assertEqual(args.train_pod5_dir, "train.pod5")
+                self.assertEqual(args.val_pod5_dir, "val.pod5")
+
     def test_version_comes_from_project_metadata(self):
         self.assertEqual(__version__, "0.2.0")
 

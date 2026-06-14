@@ -69,10 +69,6 @@ Model Types:
                         help='Path to BAM file (must contain mv/ts tags)')
     parser.add_argument('--pod5_dir', '--pod5', dest='pod5_dir', type=str,
                         help='Path to POD5 file or directory containing raw signal files')
-    parser.add_argument('--train_pod5_dir', '--train_pod5', dest='train_pod5_dir', type=str,
-                        help='Path to training POD5 directory (training modes)')
-    parser.add_argument('--val_pod5_dir', '--val_pod5', dest='val_pod5_dir', type=str,
-                        help='Path to validation POD5 directory (training modes)')
     parser.add_argument('--chr', type=str, default='|', 
                         help='Chromosome filter: "|"=all, "|Chr1,Chr2"=include only, "Chr1,Chr2|"=exclude')
     parser.add_argument('--max_bin_length', type=int, default=512,
@@ -94,6 +90,10 @@ Model Types:
     
     # Training-specific arguments
     if mode in ['pretrain', 'finetune', 'calibration']:
+        parser.add_argument('--train_pod5_dir', '--train_pod5', dest='train_pod5_dir', type=str,
+                            help='Path to training POD5 directory')
+        parser.add_argument('--val_pod5_dir', '--val_pod5', dest='val_pod5_dir', type=str,
+                            help='Path to validation POD5 directory')
         parser.add_argument('--max_steps', type=int, help='Maximum training steps')
         parser.add_argument('--val_num', type=int, help='Number of validation samples')
     
