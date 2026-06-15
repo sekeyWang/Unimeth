@@ -1,6 +1,8 @@
 """
 TSV writer using background thread for asynchronous I/O.
 """
+import gzip
+import shutil
 import threading
 import queue
 from pathlib import Path
@@ -21,8 +23,8 @@ class TSVWriter:
     3. Main thread only does fast queue.put()
     """
     
-    def __init__(self, output_path: str, num_processes: int, process_index: int, 
-                 max_queue_size: int = 100):
+    def __init__(self, output_path: str, num_processes: int, process_index: int,
+                 max_queue_size: int = 100, gzip_output: bool = False):
         """
         Initialize async TSV writer.
         
@@ -31,21 +33,43 @@ class TSVWriter:
             num_processes: Total number of processes (ranks)
             process_index: Current process index
             max_queue_size: Maximum write queue size (default: 100)
+            gzip_output: Whether to gzip-compress the final TSV output
         """
-        self.output_path = make_output_path(output_path)
+        output_path = make_output_path(output_path)
+        self.gzip_output = gzip_output
+        self.output_path = self._gzip_path(output_path) if gzip_output else output_path
+        self.rank_output_base = self._plain_tsv_path(self.output_path) if gzip_output else self.output_path
         self.num_processes = num_processes
         self.process_index = process_index
         
         # Each rank gets its own output file
-        self.rank_output = self.output_path.parent / \
-            f"{self.output_path.stem}_rank{process_index}{self.output_path.suffix}"
+        self.rank_output = self.rank_output_for(process_index)
         
         # Threading setup
         self.write_queue = queue.Queue(maxsize=max_queue_size)
         self.writer_thread = None
         self._stop_event = threading.Event()
         self._total_written = 0
-        
+
+    @staticmethod
+    def _gzip_path(output_path: Path) -> Path:
+        """Return output_path with a .gz suffix, without duplicating it."""
+        if output_path.suffix == '.gz':
+            return output_path
+        return Path(f"{output_path}.gz")
+
+    @staticmethod
+    def _plain_tsv_path(output_path: Path) -> Path:
+        """Return the uncompressed TSV path used for rank temp files."""
+        if output_path.suffix == '.gz':
+            return output_path.with_suffix('')
+        return output_path
+
+    def rank_output_for(self, rank: int) -> Path:
+        """Return rank-specific temporary output path."""
+        return self.rank_output_base.parent / \
+            f"{self.rank_output_base.stem}_rank{rank}{self.rank_output_base.suffix}"
+
     def _writer_loop(self):
         """Background thread: consume queue, format and write to file."""
         with open(self.rank_output, 'w') as f:
@@ -95,13 +119,28 @@ class TSVWriter:
         """Merge all rank-specific output files into one."""
         if not is_main_process:
             return
-        
+
+        if self.gzip_output:
+            self._merge_outputs_gzip(remove_temp=True)
+            return
+
         merge_rank_files(
             output_path=self.output_path,
             num_processes=self.num_processes,
             remove_temp=True,
             verbose=True
         )
+
+    def _merge_outputs_gzip(self, remove_temp: bool = True) -> None:
+        """Merge rank-specific TSV files into a single gzip-compressed output."""
+        with gzip.open(self.output_path, 'wb') as outfile:
+            for rank in range(self.num_processes):
+                rank_file = self.rank_output_for(rank)
+                if rank_file.exists():
+                    with open(rank_file, 'rb') as infile:
+                        shutil.copyfileobj(infile, outfile)
+                    if remove_temp:
+                        rank_file.unlink()
     
     def _format_batch(self, preds: torch.Tensor, methy: torch.Tensor,
                      read_ids: List[str], chrs: List[str], strands: List[str],

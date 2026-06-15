@@ -22,7 +22,8 @@ from unimeth.model.datasets import collate_fn
 from unimeth.model.loader import load_model
 from unimeth.utils import local_print
 from unimeth.ioutils.reader.bam import BamReader
-from unimeth.ioutils.writer.bam_aggregation import AggregationBAMWriter
+# from unimeth.ioutils.writer.bam_aggregation import AggregationBAMWriter
+from unimeth.ioutils.writer.bam_finalize import finalize_part_bams
 
 
 class InferenceEngine:
@@ -133,7 +134,8 @@ class InferenceEngine:
                 output_path=tsv_path,
                 num_processes=self.accelerator.num_processes,
                 process_index=rank,
-                max_queue_size=50
+                max_queue_size=50,
+                gzip_output=getattr(self.args, 'gzip', False),
             )
 
         if output_format in ('bam', 'both'):
@@ -275,7 +277,6 @@ class InferenceEngine:
 
         if bam_writer is not None:
             if is_main:
-                import subprocess
                 import glob
 
                 bam_path = self.args.bam_out_dir or self.args.out_dir
@@ -283,17 +284,7 @@ class InferenceEngine:
                 if part_files:
                     local_print(f"Merging {len(part_files)} part BAM(s)...")
                     try:
-                        if len(part_files) == 1:
-                            os.rename(part_files[0], bam_path)
-                        else:
-                            merged_unsorted = bam_path.replace('.bam', '.merged_unsorted.bam')
-                            subprocess.run(['samtools', 'merge', '-@', '8', '-f', merged_unsorted] + part_files, check=True)
-                            local_print(f"Sorting BAM...")
-                            subprocess.run(['samtools', 'sort', '-@', '8', '-o', bam_path, merged_unsorted], check=True)
-                            os.remove(merged_unsorted)
-                            for f in part_files:
-                                os.remove(f)
-                        subprocess.run(['samtools', 'index', bam_path], check=True)
+                        finalize_part_bams(bam_path, part_files)
                         local_print(f"Final BAM: {bam_path}")
                     except Exception as e:
                         local_print(f"Warning: Failed to finalize BAM files: {e}")

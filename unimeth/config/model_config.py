@@ -10,7 +10,8 @@ from typing import List, Dict, Any
 
 # Set timezone
 os.environ['TZ'] = 'Asia/Shanghai'
-time.tzset()
+if hasattr(time, 'tzset'):
+    time.tzset()
 
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -144,7 +145,7 @@ class DataConfig:
     m6A: int = 0
     
     # Platform parameters
-    pore_type: str = 'r9.4.1'
+    pore_type: str = 'R9.4.1'
     frequency: str = '4khz'
     dorado_version: float = 0.71
     
@@ -157,5 +158,4 @@ class DataConfig:
     @property
     def vocab(self) -> List[str]:
         return VOCAB
-
 

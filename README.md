@@ -7,8 +7,8 @@
 [![PyPI-version](https://img.shields.io/pypi/v/unimeth)](https://pypi.org/project/unimeth/)
 [![PyPI-Downloads](https://static.pepy.tech/badge/unimeth)](https://pepy.tech/project/unimeth/)
 
-![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/workflow.jpg)
-**Unimeth** is a unified deep learning framework for accurate and efficient detection of DNA methylation (5mC, 6mA) from Oxford Nanopore sequencing data. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz), handles plant, mammalian, and bacterial genomes, and achieves state-of-the-art performance across diverse genomic contexts.
+<!-- Workflow figure temporarily hidden while it is being updated: ![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/workflow.jpg) -->
+**Unimeth** is a unified deep learning framework for detecting DNA methylation (5mC, 6mA) from Oxford Nanopore reads. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz) and methylation calling across plant, mammalian, and bacterial genomes.
 
 ---
 
@@ -16,9 +16,6 @@
 
 - **Unified Detection**: Supports DNA 5mC (CpG, CHG, CHH) and 6mA detection.
 - **Multi-Chemistry Support**: Compatible with R9.4.1, R10.4.1 4kHz, and R10.4.1 5kHz chemistries.
-- **Patch-Based Transformer**: Captures contextual dependencies between neighboring methylation sites.
-- **Multi-Phase Training**: Pre-training, read-level fine-tuning, and site-level calibration for robust performance.
-- **Low False Positive Rate**: Especially effective in non-CpG contexts and low-methylation regions.
 - **Easy-to-Use**: Standard input/output formats (POD5 and BAM, BED).
 
 ---
@@ -52,7 +49,7 @@ conda activate unimeth
 pip install unimeth
 ```
 
-Use unimeth -v to validate it successfully installed if it shows the version.
+Use `unimeth --help` to list utility subcommands and `unimeth-infer --help` to validate the inference entry point.
 
 ---
 
@@ -88,15 +85,15 @@ dorado basecaller --device cuda:all --recursive --emit-moves \
 
 ### 3. Methylation Calling with Unimeth
 
-Run Unimeth to detect methylation (use `--accelerator` to enable multi-GPUs if available):
+Run Unimeth to detect methylation. Use `unimeth-infer` for single-process inference. For multi-GPU inference, launch the same module with `accelerate launch -m unimeth.inference`.
 
 ```bash
 # TSV output (default)
-unimeth \
---pod5_dir demo/subset_18.pod5 \
---bam_dir demo/demo.bam \
---model_dir checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
---out_dir results/arab.tsv \
+unimeth-infer \
+--pod5 demo/subset_18.pod5 \
+--bam demo/demo.bam \
+--model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
+--out results/arab.tsv \
 --output_format tsv \
 --cpg 1 \
 --chg 1 \
@@ -109,11 +106,11 @@ unimeth \
 
 ```bash
 # modBAM output
-unimeth \
---pod5_dir demo/subset_18.pod5 \
---bam_dir demo/demo.bam \
---model_dir checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
---out_dir results/arab.bam \
+unimeth-infer \
+--pod5 demo/subset_18.pod5 \
+--bam demo/demo.bam \
+--model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
+--out results/arab.bam \
 --output_format bam \
 --cpg 1 \
 --batch_size 256 \
@@ -122,23 +119,23 @@ unimeth \
 --dorado_version 0.71
 ```
 
-Use `--output_format both` to generate TSV and modBAM simultaneously.
+The examples set `--batch_size 256` for conservative demo memory usage; if omitted, the current code default is `512`. Use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam` to generate TSV and modBAM simultaneously.
 
 #### Output
 
-Unimeth outputs read-level methylation calls in **tsv** or **modBAM** format. A sample TSV output is as follows:
+Unimeth outputs read-level methylation calls in **TSV** or **modBAM** format. A sample TSV output is as follows:
 
 
-| Chromosome | Ref pos| Strand | - | Read id| Read pos | Prob-positive  | Prob-negative | Pred(0/1) | . |
-|--------|-----------|----|-------|-----------------------------------|-------|-------------------|----------------------|-------|------|
-| Chr2  | 15338477 | -  | 9    | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 0  | 0.985 | 0.014 | 0 | . |
-| Chr2  | 15338471 | -  | 5    | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 6  | 0.990 | 0.009 | 0 | . |
-| Chr2  | 15338465 | -  | 6    | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 12 | 0.998 | 0.001 | 0 | . |
-| Chr2  | 15338462 | -  | -1   | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 15 | 0.998 | 0.001 | 0 | . |
-| Chr2  | 15338457 | -  | -1   | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 20 | 0.999 | 0.000 | 0 | . |
+| Chromosome | Ref pos | Strand | Label | Read id | Read pos | Methylation type | Prob-negative | Prob-positive | Pred(0/1) | . |
+|--------|-----------|----|-------|-----------------------------------|-------|-------------------|---------------|---------------|-------|------|
+| Chr2 | 15338477 | - | -1 | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 0 | [CpG] | 0.985000 | 0.014000 | 0 | . |
+| Chr2 | 15338471 | - | -1 | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 6 | [CpG] | 0.990000 | 0.009000 | 0 | . |
+| Chr2 | 15338465 | - | -1 | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 12 | [CHG] | 0.998000 | 0.001000 | 0 | . |
+| Chr2 | 15338462 | - | -1 | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 15 | [CHH] | 0.998000 | 0.001000 | 0 | . |
+| Chr2 | 15338457 | - | -1 | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 20 | [CHH] | 0.999000 | 0.000000 | 0 | . |
 ---
 
-The tsv file can be further processed to generate site-level methylation frequencies using the provided `scripts/call_modification_frequency.py` script, also can be converted to modBAM format using `scripts/generate_5mC_modbam_file.py` (only support 5mC now).
+The TSV file can be further processed to generate site-level methylation frequencies using the provided `scripts/call_modification_frequency.py` script. It can also be converted to modBAM format using `scripts/generate_5mC_modbam_file.py` (5mC only).
 
 
 ## 🧪 Models
@@ -146,14 +143,16 @@ The tsv file can be further processed to generate site-level methylation frequen
 We provide pre-trained models for:
 
 - **Plant 5mC** (R10.4.1 5kHz, R9.4.1)
-- **Human CpG** (R10.4.1 5kHz/4kHz, R9.4.1)
+- **Human 5mCpG** (R10.4.1 5kHz/4kHz, R9.4.1)
 - **6mA Detection** (R10.4.1)
 
 Download models from the [Google Drive](https://drive.google.com/drive/folders/1f8bWVFmbPxL6WqukOUi_BufCEvpOHaxR) page.
 
 ---
 
+<!--
 ## 📊 Performance Highlights
+Benchmark figure temporarily hidden while results are being updated:
 ![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/plant_result.jpg)
 - Outperforms DeepPlant, Dorado, Rockfish, and DeepMod2 in cross-species benchmarks.
 - Superior accuracy in repetitive regions (centromeres, transposons).
@@ -163,6 +162,7 @@ Download models from the [Google Drive](https://drive.google.com/drive/folders/1
 For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.05.692231).
 
 ---
+-->
 
 ## 📁 Input/Output Formats
 
@@ -176,7 +176,7 @@ For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.0
 |---------------|-------------|
 | tsv           | Per-read methylation calls (`--output_format tsv`, default) |
 | modBAM        | BAM with MM/ML methylation tags (`--output_format bam`) |
-| both          | TSV and modBAM simultaneously (`--output_format both`) |
+| both          | TSV and modBAM simultaneously (`--output_format both`; use `--tsv_out`/`--tsv_out_dir` and `--bam_out`/`--bam_out_dir` for separate paths) |
 | bedmethyl     | Site-level methylation frequencies (post-processing) |
 ---
 
@@ -195,4 +195,4 @@ This project is licensed under the BSD 3-Clause Clear License. See [LICENSE](LIC
 ---
 
 ## 📬 Contact
-- GitHub Issues: [https://github.com/sekeyWang/unimeth/issues](https://github.com/sekeyWang/unimeth/issues)
+- GitHub Issues: [https://github.com/sekeyWang/Unimeth/issues](https://github.com/sekeyWang/Unimeth/issues)

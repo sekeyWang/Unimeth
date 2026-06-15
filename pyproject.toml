@@ -1,6 +1,6 @@
 [project]
 name = "unimeth"
-version = "0.1.0"
+version = "0.2.0"
 authors = [{ name = "Shaokai Wang", email = "skwang@csu.edu.cn" }]
 license = { text = "BSD-3-Clause-Clear license" }
 description = "Unimeth - Unified DNA Methylation Detection from Nanopore Reads"
