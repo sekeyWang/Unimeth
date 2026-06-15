@@ -1,6 +1,10 @@
 Changelog
 =========
 
+v0.2.1
+------
+- support unaligned BAM input
+
 v0.2.0
 ------
 - Add BAM output support (``--output_format bam/tsv/both``)

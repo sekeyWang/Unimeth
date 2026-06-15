@@ -68,6 +68,8 @@ def get_modifications(bam_read, mod_key: Tuple) -> Dict[int, int]:
         Dictionary mapping position to modification score (0-255)
     """
     mod = bam_read.modified_bases_forward
+    if not mod:
+        return {}
     mod_list = mod.get(mod_key, [])
     return {pos: score for pos, score in mod_list}
 

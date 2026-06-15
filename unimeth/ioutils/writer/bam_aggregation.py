@@ -254,9 +254,9 @@ class AggregationBAMWriter:
             return
         fwd_seq = fwd_seq.upper()
         
-        # Get chromosome name
-        if bam_read.reference_name is None:
-            return
+        # MM/ML tags are read-coordinate, so unaligned reads can still be written.
+        # if bam_read.reference_name is None:
+        #     return
 
         # Collect all predictions, grouped by canonical base type (C vs A).
         c_preds: list = []   # CpG + CHG + CHH

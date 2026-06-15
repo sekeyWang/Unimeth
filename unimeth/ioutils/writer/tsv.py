@@ -36,9 +36,9 @@ class TSVWriter:
             gzip_output: Whether to gzip-compress the final TSV output
         """
         output_path = make_output_path(output_path)
-        self.gzip_output = gzip_output
-        self.output_path = self._gzip_path(output_path) if gzip_output else output_path
-        self.rank_output_base = self._plain_tsv_path(self.output_path) if gzip_output else self.output_path
+        self.gzip_output = gzip_output or output_path.suffix == '.gz'
+        self.output_path = self._gzip_path(output_path) if self.gzip_output else output_path
+        self.rank_output_base = self._plain_tsv_path(self.output_path) if self.gzip_output else self.output_path
         self.num_processes = num_processes
         self.process_index = process_index
         
