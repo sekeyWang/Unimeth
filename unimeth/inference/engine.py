@@ -134,7 +134,8 @@ class InferenceEngine:
                 output_path=tsv_path,
                 num_processes=self.accelerator.num_processes,
                 process_index=rank,
-                max_queue_size=50
+                max_queue_size=50,
+                gzip_output=getattr(self.args, 'gzip', False),
             )
 
         if output_format in ('bam', 'both'):

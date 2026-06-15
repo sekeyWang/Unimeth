@@ -41,6 +41,12 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
         self.assertEqual(args.model_dir, "model.pt")
         self.assertEqual(args.out_dir, "predictions.tsv")
 
+    def test_inference_gzip_flag_defaults_to_false_and_can_be_enabled(self):
+        parser = create_argument_parser("inference")
+
+        self.assertFalse(parser.parse_args([]).gzip)
+        self.assertTrue(parser.parse_args(["--gzip"]).gzip)
+
     def test_inference_help_omits_training_pod5_options(self):
         help_text = create_argument_parser("inference").format_help()
 

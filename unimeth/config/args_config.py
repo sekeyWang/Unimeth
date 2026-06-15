@@ -121,6 +121,8 @@ Model Types:
                            default='tsv', help='Output format: tsv (default), bam, or both (dual output for verification)')
         parser.add_argument('--tsv_out_dir', '--tsv_out', dest='tsv_out_dir', type=str, default=None,
                            help='TSV output path when --output_format both (defaults to --out_dir)')
+        parser.add_argument('--gzip', action='store_true',
+                           help='Compress TSV output with gzip (.gz). Applies to --output_format tsv or both')
         parser.add_argument('--bam_out_dir', '--bam_out', dest='bam_out_dir', type=str, default=None,
                            help='BAM output path when --output_format both (defaults to --out_dir)')
         parser.add_argument('--model_type', type=str, choices=['default', 'distilled'],
