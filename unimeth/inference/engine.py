@@ -157,6 +157,7 @@ class InferenceEngine:
                 output_path=str(rank_bam_path),
                 template_bam_path=self.args.bam_dir,
                 bam_reader=bam_reader,
+                keep_mv=getattr(self.args, 'keep_mv', False),
             )
 
         pbar_desc = {'tsv': 'Inference', 'bam': 'Inference (BAM)', 'both': 'Inference (TSV+BAM)'}.get(output_format, 'Inference')

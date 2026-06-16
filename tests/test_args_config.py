@@ -53,6 +53,12 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
         self.assertEqual(parser.parse_args([]).mapq_thres, 0)
         self.assertEqual(parser.parse_args(["--mapq", "20"]).mapq_thres, 20)
 
+    def test_inference_keep_mv_flag_defaults_to_false_and_can_be_enabled(self):
+        parser = create_argument_parser("inference")
+
+        self.assertFalse(parser.parse_args([]).keep_mv)
+        self.assertTrue(parser.parse_args(["--keep_mv"]).keep_mv)
+
     def test_inference_help_omits_training_pod5_options(self):
         help_text = create_argument_parser("inference").format_help()
 

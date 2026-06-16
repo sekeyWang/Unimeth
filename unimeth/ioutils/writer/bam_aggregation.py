@@ -70,6 +70,7 @@ class AggregationBAMWriter:
         output_path: Path to output BAM file (should include rank info, e.g., "output.part_0.bam")
         template_bam_path: Path to template BAM for header copying
         bam_reader: BamReader instance for fetching original reads
+        keep_mv: Whether to retain mv tags in output modBAM
     """
     
     def __init__(
@@ -77,9 +78,11 @@ class AggregationBAMWriter:
         output_path: str,
         template_bam_path: str,
         bam_reader: BamReader,
+        keep_mv: bool = False,
     ):
         self.output_path = output_path
         self.bam_reader = bam_reader
+        self.keep_mv = keep_mv
         
         # Initialize output BAM with template header
         template = pysam.AlignmentFile(template_bam_path, "rb")
@@ -288,6 +291,8 @@ class AggregationBAMWriter:
                 written = True
         
         if written:
+            if not self.keep_mv and bam_read.has_tag('mv'):
+                bam_read.set_tag('mv', None)
             self.output_bam.write(bam_read)
     
     def close(self):
