@@ -155,13 +155,14 @@ def process_bam_worker(
             if len(label) == 0:
                 continue
             
-            # Build positions and scores from label {pos_{pos}: score}
+            # Build index-in-A-array and scores from label {pos_{pos}: score}
+            # MM tag skip counts are relative to the target base array, not absolute positions
             positions = []
             scores = []
-            for pos in target_pos:
+            for i, pos in enumerate(target_pos):
                 key = f'pos_{pos}'
                 if key in label:
-                    positions.append(pos)
+                    positions.append(i)
                     scores.append(label[key])
             
             if len(positions) == 0:

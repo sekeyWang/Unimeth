@@ -11,6 +11,7 @@ Example usage:
         --out_folder <output_dir>
 """
 import argparse
+import os
 from typing import Dict, Tuple
 
 from unimeth.ioutils.reader import BEDReader
@@ -50,14 +51,16 @@ def create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--bed_file_dir',
         type=str,
+        nargs='+',
         required=True,
-        help='Path to BED file with bisulfite labels'
+        help='Path(s) to BED file(s) with bisulfite labels (multiple files are merged)'
     )
     parser.add_argument(
         '--bam_file_dir',
         type=str,
+        nargs='+',
         required=True,
-        help='Path to input BAM file'
+        help='Path(s) to input BAM file(s)'
     )
     parser.add_argument(
         '--coverage_thres',
@@ -93,24 +96,33 @@ def main():
 
     print(f'bed_to_bam: {args}')
 
-    bam_writer = LabelBAMWriter(
-        bam_dir=args.bam_file_dir,
-        out_folder=args.out_folder,
-        mapq_thres=args.mapq_thres
-    )
+    # Load and merge labels from all BED files (done once, shared across BAMs)
+    merged_labels: Dict[Tuple[str, int], float] = {}
+    for bed_path in args.bed_file_dir:
+        bed_labels = BEDReader(bed_path).load_labels(
+            coverage_thres=args.coverage_thres,
+            chr_str=args.chr
+        )
+        if bed_labels:
+            site_labels = convert_bed_to_site_labels(bed_labels)
+            merged_labels.update(site_labels)
 
-    bed_labels = BEDReader(args.bed_file_dir).load_labels(
-        coverage_thres=args.coverage_thres,
-        chr_str=args.chr
-    )
-
-    if bed_labels:
-        # Convert to site-level format
-        site_labels = convert_bed_to_site_labels(bed_labels)
-        bam_writer.write_multi_process(site_labels)
-        print(f'Written {len(site_labels)} labeled sites to {args.out_folder}')
-    else:
+    if not merged_labels:
         print('No bisulfite labels found.')
+        return
+
+    # Process each BAM file, writing outputs into numbered subdirs to avoid conflicts
+    bam_list = args.bam_file_dir
+    for i, bam_path in enumerate(bam_list):
+        out_folder = os.path.join(args.out_folder, str(i)) if len(bam_list) > 1 else args.out_folder
+        print(f'Processing BAM {i+1}/{len(bam_list)}: {bam_path} -> {out_folder}')
+        bam_writer = LabelBAMWriter(
+            bam_dir=bam_path,
+            out_folder=out_folder,
+            mapq_thres=args.mapq_thres
+        )
+        bam_writer.write_multi_process(merged_labels)
+        print(f'Written {len(merged_labels)} labeled sites from {bam_path} to {out_folder}')
 
 
 if __name__ == '__main__':

@@ -43,17 +43,16 @@ class BamReader:
         if force_rebuild_index or not os.path.exists(bam_index_file):
             self.bam_index = self._build_bam_index(bam_index_file)
         else:
-            self.bam_index = self._load_index(bam_index_file)
+            try:
+                with open(bam_index_file, 'rb') as fr:
+                    self.bam_index = pickle.load(fr)
+            except Exception:
+                self.bam_index = self._build_bam_index(bam_index_file)
     
-    def _load_index(self, bam_index_file: str) -> dict:
-        """Load index from cached pickle file."""
-        with open(bam_index_file, 'rb') as fr:
-            bam_index = pickle.load(fr)
-        return bam_index
-    
+
     def _build_bam_index(self, bam_index_file: str) -> dict:
-        """Build index and save to cache file."""
         local_print('Building bam index...')
+        self.bam_file.reset()
         bam_index = {}
         read_ptr = self.bam_file.tell()
         

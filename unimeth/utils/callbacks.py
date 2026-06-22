@@ -21,7 +21,7 @@ class MetricsCallback(TrainerCallback):
         """Add step number to logs."""
         if logs is not None:
             logs['steps'] = state.global_step
-        return super().on_log(args, state, control, logs, **kwargs)
+        return super().on_log(args, state, control, logs=logs, **kwargs)
 
 
 class EarlyStoppingCallback(TrainerCallback):

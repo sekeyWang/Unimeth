@@ -9,7 +9,6 @@ from transformers.trainer_pt_utils import AcceleratorConfig
 from unimeth.utils import local_print, MetricsCallback
 
 
-
 class BaseTrainer(ABC):
     """
     Base class for pretraining and fine-tuning trainers.
@@ -36,13 +35,13 @@ class BaseTrainer(ABC):
         """Create AcceleratorConfig for distributed training."""
         return AcceleratorConfig(
             dispatch_batches=True,
-            split_batches=True
+            split_batches=True,
         )
-    
+
     def _create_training_args(self):
         """Create TrainingArguments with common settings."""
         accelerator_config = self._create_accelerator_config()
-        
+
         return TrainingArguments(
             # Training args
             learning_rate=self._get_learning_rate(),
@@ -54,14 +53,14 @@ class BaseTrainer(ABC):
             ddp_find_unused_parameters=False,
             accelerator_config=accelerator_config,
             remove_unused_columns=False,
-            
+
             # Dataloader
             bf16=True,
             dataloader_num_workers=4,
             dataloader_pin_memory=True,
             dataloader_prefetch_factor=2,
             dataloader_drop_last=True,
-            
+
             # Save model
             output_dir=f"models/{self.mode}/{self.args.run_name}",
             overwrite_output_dir=True,
@@ -69,16 +68,16 @@ class BaseTrainer(ABC):
             save_safetensors=False,
             save_strategy="steps",
             save_steps=self._get_save_steps(),
-            
+
             # Logging
             logging_strategy="steps",
             logging_steps=500,
-            
+
             # Evaluation
             eval_strategy="steps",
             eval_steps=self._get_eval_steps(),
-            include_for_metrics=["inputs"] if self.mode != 'pretrain' else False,
-            
+            include_for_metrics=["inputs"] if self.mode != 'pretrain' else [],
+
             # Wandb
             report_to=self._get_report_to(),
             run_name=self.args.run_name
@@ -131,8 +130,11 @@ class BaseTrainer(ABC):
         val_pod5_dirs = parse_dirs(getattr(self.args, 'val_pod5_dir', None))
         
         if bam_dirs and train_pod5_dirs and len(bam_dirs) != len(train_pod5_dirs):
-            raise ValueError('Need same number of bam files and pod5 directories')
-        
+            if len(bam_dirs) == 1:
+                bam_dirs = bam_dirs * len(train_pod5_dirs)
+            else:
+                raise ValueError('Need same number of bam files and pod5 directories')
+
         return bam_dirs, train_pod5_dirs, val_pod5_dirs
     
     @abstractmethod
@@ -165,12 +167,10 @@ class BaseTrainer(ABC):
         """Run training."""
         self.create_model()
         self.create_datasets()
-        
+
         trainer = self.create_trainer()
-        
-        # Run initial evaluation for non-pretrain modes
+
         if self.mode != 'pretrain':
             local_print(trainer.evaluate())
-        
-        # Train
+
         trainer.train()
