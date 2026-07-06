@@ -36,9 +36,9 @@ __all__ = [
 def __getattr__(name):
     if name in {'MetricsCallback', 'EarlyStoppingCallback'}:
         from .callbacks import MetricsCallback, EarlyStoppingCallback
-        callbacks = {
+        globals().update({
             'MetricsCallback': MetricsCallback,
             'EarlyStoppingCallback': EarlyStoppingCallback,
-        }
-        return callbacks[name]
+        })
+        return globals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

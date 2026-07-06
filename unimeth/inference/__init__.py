@@ -11,8 +11,10 @@ __all__ = [
 def __getattr__(name):
     if name == 'InferenceEngine':
         from .engine import InferenceEngine
+        globals()[name] = InferenceEngine
         return InferenceEngine
     if name == 'load_model':
         from unimeth.model.loader import load_model
+        globals()[name] = load_model
         return load_model
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from unimeth.config import model_config
 from unimeth.config.model_config import ModelConfig
@@ -16,6 +17,16 @@ class ModelConfigPackageDataTest(unittest.TestCase):
 
         self.assertEqual(ModelConfig.from_name("default").d_model, 384)
         self.assertEqual(ModelConfig.from_name("distilled").d_model, 256)
+
+    def test_config_dir_rejects_non_filesystem_resources(self):
+        class FakeTraversable:
+            pass
+
+        with patch.object(model_config.resources, "files", return_value=FakeTraversable()):
+            with self.assertRaises(RuntimeError) as ctx:
+                model_config.get_config_dir()
+
+        self.assertIn("not available as a filesystem path", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -37,7 +37,13 @@ METHYLATION_LABELS = {'+': TOKENIZER['+'], '-': TOKENIZER['-']}
 
 def get_config_dir() -> Path:
     """Get the packaged model configs directory."""
-    return Path(str(resources.files("unimeth.configs")))
+    config_dir = resources.files("unimeth.configs")
+    if isinstance(config_dir, Path):
+        return config_dir
+    raise RuntimeError(
+        "Packaged model configs are not available as a filesystem path; "
+        "use ModelConfig.from_name() to load named configs."
+    )
 
 
 @dataclass(frozen=True)

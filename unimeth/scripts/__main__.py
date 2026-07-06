@@ -127,7 +127,7 @@ def main():
         # Import and run the module's main function
         module_path = subcommands[subcmd]
         module = __import__(module_path, fromlist=['main'])
-        sys.argv = [sys.argv[0]] + sys.argv[3:]
+        sys.argv = [f"unimeth {cmd} {subcmd}"] + sys.argv[3:]
         module.main()
         return
     
