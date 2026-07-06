@@ -25,13 +25,25 @@ Examples:
     unimeth evaluate --tsv_dir <predictions.txt> --CpG_bed_dir <labels.bed>
 """
 import sys
-import argparse
 
 from unimeth import __version__
 
 
 # Command registry
-COMMANDS = {
+DIRECT_COMMANDS = {
+    'infer': {
+        'description': 'Run methylation inference',
+        'module': 'unimeth.inference.__main__',
+        'prog': 'unimeth infer',
+    },
+    'evaluate': {
+        'description': 'Evaluate predictions against bisulfite ground truth',
+        'module': 'unimeth.scripts.evaluate',
+        'prog': 'unimeth evaluate',
+    },
+}
+
+GROUP_COMMANDS = {
     'calibration': {
         'description': 'Calibration data preparation tools',
         'subcommands': {
@@ -50,18 +62,20 @@ COMMANDS = {
     },
 }
 
+COMMANDS = {**DIRECT_COMMANDS, **GROUP_COMMANDS}
+
 
 def print_help():
     """Print help message."""
     print(__doc__)
     print(f"Version: {__version__}")
     print("\nAvailable commands:\n")
-    for cmd, info in COMMANDS.items():
+    for cmd, info in DIRECT_COMMANDS.items():
+        print(f"  {cmd:15} {info['description']}")
+    for cmd, info in GROUP_COMMANDS.items():
         print(f"  {cmd:15} {info['description']}")
         for sub, module in info['subcommands'].items():
             print(f"    {sub:15} ({module})")
-    print("\n  infer           Run methylation inference")
-    print("\n  evaluate        Evaluate predictions against bisulfite ground truth")
     print()
 
 
@@ -77,35 +91,28 @@ def main():
     
     cmd = sys.argv[1]
 
-    # Direct command: infer
-    if cmd == 'infer':
-        from unimeth.inference.__main__ import main as inference_main
-        sys.argv = ["unimeth infer"] + sys.argv[2:]
-        inference_main()
-        return
-    
-    # Direct command: evaluate
-    if cmd == 'evaluate':
-        from unimeth.scripts.evaluate import main as evaluate_main
-        sys.argv = [sys.argv[0]] + sys.argv[2:]
-        evaluate_main()
+    if cmd in DIRECT_COMMANDS:
+        command = DIRECT_COMMANDS[cmd]
+        module = __import__(command['module'], fromlist=['main'])
+        sys.argv = [command['prog']] + sys.argv[2:]
+        module.main()
         return
     
     # Category subcommands: calibration, m6a
-    if cmd in COMMANDS:
+    if cmd in GROUP_COMMANDS:
         if len(sys.argv) < 3:
             print(f"Error: {cmd} requires a subcommand")
             print(f"\nAvailable subcommands for '{cmd}':")
-            for sub in COMMANDS[cmd]['subcommands']:
+            for sub in GROUP_COMMANDS[cmd]['subcommands']:
                 print(f"  {sub}")
             print()
             sys.exit(1)
         
         subcmd = sys.argv[2]
-        subcommands = COMMANDS[cmd]['subcommands']
+        subcommands = GROUP_COMMANDS[cmd]['subcommands']
         
         if subcmd in ('-h', '--help', 'help'):
-            print(f"\nUsage: python -m scripts {cmd} <subcommand> [options]\n")
+            print(f"\nUsage: unimeth {cmd} <subcommand> [options]\n")
             print(f"Available subcommands for '{cmd}':")
             for sub in subcommands:
                 print(f"  {sub}")
