@@ -45,7 +45,6 @@ exclude = [
     "tools/",
     "wandb/",
     "dist/",
-    "configs/",
     "AGENTS.md",
     "AGENTS_ENV.md",
     "config_gpu14.yaml",

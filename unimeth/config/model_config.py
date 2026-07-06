@@ -5,6 +5,7 @@ import os
 import time
 import json
 from pathlib import Path
+from importlib import resources
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any
 
@@ -35,10 +36,8 @@ METHYLATION_LABELS = {'+': TOKENIZER['+'], '-': TOKENIZER['-']}
 
 
 def get_config_dir() -> Path:
-    """Get the configs directory path (project root)."""
-    src_dir = Path(__file__).parent
-    project_root = src_dir.parent.parent  # src/config/ -> src/ -> root/
-    return project_root / "configs"
+    """Get the packaged model configs directory."""
+    return Path(str(resources.files("unimeth.configs")))
 
 
 @dataclass(frozen=True)
@@ -110,12 +109,13 @@ class ModelConfig:
     
     @classmethod
     def from_name(cls, name: str = "default"):
-        """Load config from configs/{name}.json."""
-        config_dir = get_config_dir()
-        config_path = config_dir / f"{name}.json"
-        if not config_path.exists():
+        """Load config from packaged configs/{name}.json."""
+        config_path = resources.files("unimeth.configs").joinpath(f"{name}.json")
+        if not config_path.is_file():
             raise FileNotFoundError(f"Config not found: {config_path}")
-        return cls.from_json(str(config_path))
+        with config_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return cls(**data)
 
 
 @dataclass(frozen=True)
@@ -158,4 +158,3 @@ class DataConfig:
     @property
     def vocab(self) -> List[str]:
         return VOCAB
-
