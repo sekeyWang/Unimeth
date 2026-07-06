@@ -2,9 +2,10 @@
 Unified entry point for UniMeth utility scripts.
 
 Usage:
-    python -m scripts <command> [options]
+    unimeth <command> [options]
     
 Commands:
+    infer               Run methylation inference
     calibration         Calibration data preparation tools
         bed_to_bam      Convert BED bisulfite labels to BAM
         annotator       Create read-level calibration labels
@@ -18,12 +19,15 @@ Commands:
     evaluate            Evaluate predictions against bisulfite
 
 Examples:
-    python -m scripts calibration bed_to_bam --help
-    python -m scripts m6a visualize --pred_dir <bam> --dorado_dir <bam>
-    python -m scripts evaluate --tsv_dir <predictions.txt> --CpG_bed_dir <labels.bed>
+    unimeth infer --help
+    unimeth calibration bed_to_bam --help
+    unimeth m6a visualize --pred_dir <bam> --dorado_dir <bam>
+    unimeth evaluate --tsv_dir <predictions.txt> --CpG_bed_dir <labels.bed>
 """
 import sys
 import argparse
+
+from unimeth import __version__
 
 
 # Command registry
@@ -50,22 +54,35 @@ COMMANDS = {
 def print_help():
     """Print help message."""
     print(__doc__)
+    print(f"Version: {__version__}")
     print("\nAvailable commands:\n")
     for cmd, info in COMMANDS.items():
         print(f"  {cmd:15} {info['description']}")
         for sub, module in info['subcommands'].items():
             print(f"    {sub:15} ({module})")
+    print("\n  infer           Run methylation inference")
     print("\n  evaluate        Evaluate predictions against bisulfite ground truth")
     print()
 
 
 def main():
     """Main entry point."""
+    if len(sys.argv) >= 2 and sys.argv[1] in ('-v', '--version'):
+        print(f"unimeth {__version__}")
+        sys.exit(0)
+
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help', 'help'):
         print_help()
         sys.exit(0)
     
     cmd = sys.argv[1]
+
+    # Direct command: infer
+    if cmd == 'infer':
+        from unimeth.inference.__main__ import main as inference_main
+        sys.argv = ["unimeth infer"] + sys.argv[2:]
+        inference_main()
+        return
     
     # Direct command: evaluate
     if cmd == 'evaluate':

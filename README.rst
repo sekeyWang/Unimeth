@@ -4,6 +4,7 @@ Changelog
 v0.2.1
 ------
 - support unaligned BAM input
+- add `unimeth infer` subcommand
 
 v0.2.0
 ------
