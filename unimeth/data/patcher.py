@@ -29,7 +29,10 @@ def patch_sequence(mode, bases, signal_event, shift, scale, meta_data,
     gap = chunk_size - overlap * 2
     meta_idx = 0
     
-    for i in range(0, seq_len - overlap * 2, gap):
+    patch_end = seq_len - overlap * 2
+    patch_starts = [0] if patch_end <= 0 and meta_data else range(0, patch_end, gap)
+
+    for i in patch_starts:
         # Sequence processing
         left, right = i, i + chunk_size
         chunk_bases = bases[left: right]

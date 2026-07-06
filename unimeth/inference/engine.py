@@ -22,8 +22,13 @@ from unimeth.model.datasets import collate_fn
 from unimeth.model.loader import load_model
 from unimeth.utils import local_print
 from unimeth.ioutils.reader.bam import BamReader
-# from unimeth.ioutils.writer.bam_aggregation import AggregationBAMWriter
-from unimeth.ioutils.writer.bam_finalize import finalize_part_bams
+from unimeth.ioutils.writer.bam_finalize import (
+    bam_has_references,
+    bam_part_glob,
+    bam_part_path,
+    finalize_part_bams,
+    normalize_bam_path,
+)
 
 
 class InferenceEngine:
@@ -140,8 +145,8 @@ class InferenceEngine:
 
         if output_format in ('bam', 'both'):
             from unimeth.ioutils.writer.bam_aggregation import AggregationBAMWriter
-            bam_path = self.args.bam_out_dir if self.args.bam_out_dir else self.args.out_dir
-            bam_part_path = bam_path.replace('.bam', f'.part_{rank}.bam')
+            bam_path = normalize_bam_path(self.args.bam_out_dir if self.args.bam_out_dir else self.args.out_dir)
+            rank_bam_path = bam_part_path(bam_path, rank)
             # Only rank 0 rebuilds the index to avoid race condition when all ranks
             # write to the same cache file simultaneously.
             if is_main:
@@ -149,9 +154,10 @@ class InferenceEngine:
             self.accelerator.wait_for_everyone()
             bam_reader = BamReader(self.args.bam_dir, force_rebuild_index=False)
             bam_writer = AggregationBAMWriter(
-                output_path=bam_part_path,
+                output_path=str(rank_bam_path),
                 template_bam_path=self.args.bam_dir,
                 bam_reader=bam_reader,
+                keep_mv=getattr(self.args, 'keep_mv', False),
             )
 
         pbar_desc = {'tsv': 'Inference', 'bam': 'Inference (BAM)', 'both': 'Inference (TSV+BAM)'}.get(output_format, 'Inference')
@@ -279,12 +285,13 @@ class InferenceEngine:
             if is_main:
                 import glob
 
-                bam_path = self.args.bam_out_dir or self.args.out_dir
-                part_files = sorted(glob.glob(bam_path.replace('.bam', '.part_*.bam')))
+                bam_path = normalize_bam_path(self.args.bam_out_dir or self.args.out_dir)
+                part_files = sorted(glob.glob(bam_part_glob(bam_path)))
                 if part_files:
                     local_print(f"Merging {len(part_files)} part BAM(s)...")
                     try:
-                        finalize_part_bams(bam_path, part_files)
+                        sort_and_index = bam_has_references(self.args.bam_dir)
+                        finalize_part_bams(str(bam_path), part_files, sort_and_index=sort_and_index)
                         local_print(f"Final BAM: {bam_path}")
                     except Exception as e:
                         local_print(f"Warning: Failed to finalize BAM files: {e}")

@@ -130,6 +130,10 @@ Model Types:
                            help='Model architecture: default (100M params) or distilled (62M params, faster)')
         parser.add_argument('--num_workers', type=int, default=8,
                            help='Number of CPU workers per GPU for data loading (default: 8, total=8 x num_gpus)')
+        parser.add_argument('--mapq', dest='mapq_thres', type=int, default=0,
+                           help='Minimum BAM mapping quality for aligned reads (default: 0)')
+        parser.add_argument('--keep_mv', '--keep-mv', dest='keep_mv', action='store_true',
+                           help='Keep mv tag in output modBAM (default: remove mv tag)')
         parser.add_argument('--show_reading_progress', action='store_true',
                            help='Show tqdm progress bar for data reading (default: disabled for clean output)')
         # BAM output: read-level flush control

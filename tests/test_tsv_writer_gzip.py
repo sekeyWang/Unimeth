@@ -82,6 +82,24 @@ class TSVWriterGzipTest(unittest.TestCase):
             self.assertEqual(writer.output_path, Path(tmp) / "calls.tsv.gz")
             self.assertEqual(writer.rank_output.name, "calls_rank0.tsv")
 
+    def test_gz_suffix_auto_enables_gzip_output(self):
+        TSVWriter = load_tsv_module().TSVWriter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = TSVWriter(
+                str(Path(tmp) / "calls.tsv.gz"),
+                num_processes=1,
+                process_index=0,
+                gzip_output=False,
+            )
+
+            self.assertTrue(writer.gzip_output)
+            writer.rank_output.write_text("a\t1\n", encoding="utf-8")
+            writer.merge_outputs(is_main_process=True)
+
+            with gzip.open(writer.output_path, "rt", encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "a\t1\n")
+
 
 if __name__ == "__main__":
     unittest.main()

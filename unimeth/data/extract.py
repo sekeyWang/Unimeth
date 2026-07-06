@@ -96,19 +96,19 @@ class SignalFeatureExtractor:
         Returns:
             Dictionary with extracted features or None if filtered out
         """
-        # Filter by mapping quality
+        is_unmapped = getattr(bam_read, 'is_unmapped', False) or bam_read.reference_name is None
+
+        # Filter by mapping quality and chromosome only for aligned reads.
         mapq = bam_read.mapping_quality
-        if mapq < self.mapq_thres:
+        if not is_unmapped and mapq < self.mapq_thres:
             return None
-        
-        # Filter by chromosome
-        chrom = bam_read.reference_name
-        if chrom is None:
-            return None
-        elif self.chr_mode == 'exclude' and chrom in self.chr_list:
-            return None
-        elif self.chr_mode == 'include' and chrom not in self.chr_list:
-            return None
+
+        chrom = bam_read.reference_name if not is_unmapped else '*'
+        if not is_unmapped:
+            if self.chr_mode == 'exclude' and chrom in self.chr_list:
+                return None
+            elif self.chr_mode == 'include' and chrom not in self.chr_list:
+                return None
         
         # Get sequence and signal
         seq = bam_read.get_forward_sequence().upper()
@@ -124,27 +124,34 @@ class SignalFeatureExtractor:
         move = self.get_move(bam_read)
         signal_event = self.get_signal(signal, move)
 
-        # Get alignment and modification info
-        aligned_pairs = bam_read.get_aligned_pairs()
         from unimeth.utils.bam_tags import get_modifications
         mod_dict = get_modifications(bam_read, self.detect_mod) if self.detect_mod else {}
 
-        # Reverse alignment if on reverse strand
-        if bam_read.is_reverse:
-            aligned_pairs = aligned_pairs[::-1]
-        
-        # Align to reference for R9.4.1
-        if self.align_ref:
-            result = align_to_ref(bam_read, seq, signal_event, aligned_pairs, mod_dict)
-            if result is None:
-                return None
-            seq, signal_event, aligned_pairs, mod_dict = result
-        
-        # Find methylation positions
-        pred_pos = find_methylation_sites(
-            seq, self.detect_cpg, self.detect_chg, self.detect_chh, self.detect_m6a
-        )
-        ref_pos = get_ref_pos(seq, pred_pos, aligned_pairs, bam_read.is_reverse)
+        if is_unmapped:
+            pred_pos = find_methylation_sites(
+                seq, self.detect_cpg, self.detect_chg, self.detect_chh, self.detect_m6a
+            )
+            ref_pos = [-1] * len(pred_pos)
+        else:
+            # Get alignment and modification info
+            aligned_pairs = bam_read.get_aligned_pairs()
+
+            # Reverse alignment if on reverse strand
+            if bam_read.is_reverse:
+                aligned_pairs = aligned_pairs[::-1]
+
+            # Align to reference for R9.4.1
+            if self.align_ref:
+                result = align_to_ref(bam_read, seq, signal_event, aligned_pairs, mod_dict)
+                if result is None:
+                    return None
+                seq, signal_event, aligned_pairs, mod_dict = result
+
+            # Find methylation positions
+            pred_pos = find_methylation_sites(
+                seq, self.detect_cpg, self.detect_chg, self.detect_chh, self.detect_m6a
+            )
+            ref_pos = get_ref_pos(seq, pred_pos, aligned_pairs, bam_read.is_reverse)
         
         # Get labels
         bis_label = []
