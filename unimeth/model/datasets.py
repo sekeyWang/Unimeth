@@ -96,10 +96,14 @@ class ValidationDataset(Dataset):
         total_max = 5000
         per_max = total_max // len(pod5_dirs)
         for i in range(len(pod5_dirs)):
-            dataset = Pod5BamDataset(pod5_dirs[i], bam_dirs[i], args)    
-            for num, x in enumerate(dataset):
+            dataset = Pod5BamDataset(pod5_dirs[i], bam_dirs[i], args)
+            count = 0
+            for x in dataset:
+                if isinstance(x, dict) and '__reads_complete__' in x:
+                    continue
                 self.datas.append(x)
-                if num > per_max:
+                count += 1
+                if count >= per_max:
                     break
         local_print(f'Validation data: {len(self.datas)}')
 
@@ -171,7 +175,8 @@ def collate_fn(mode, datas, total_stride=4):
             'labels': padded_decoder_inputs,
             'signal_pos': padded_signal_pos,
         }
-    ret['__reads_complete__'] = has_flush
+    if mode == 'inference':
+        ret['__reads_complete__'] = has_flush
     return ret
 
 import functools

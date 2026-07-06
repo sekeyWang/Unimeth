@@ -270,7 +270,7 @@ def get_datasets(feature, args):
     """
     if args.mode == 'pretrain':
         yield from get_pretrain_datasets(feature, args)
-    elif args.mode == 'finetune':
+    elif args.mode in ('finetune', 'calibration'):
         yield from get_finetune_datasets(feature, args)
     elif args.mode == 'inference':
         yield from get_inference_datasets(feature, args)

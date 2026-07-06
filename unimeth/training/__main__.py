@@ -35,14 +35,13 @@ import argparse
 import datetime
 
 from unimeth.config import merge_with_default_config, defaultconfig
-from unimeth.training import PretrainTrainer, FinetuneTrainer, CalibrationTrainer, DistillationTrainer
+from unimeth.training import PretrainTrainer, FinetuneTrainer, CalibrationTrainer
 from unimeth.utils import local_print
 
 TRAINER_MAP = {
     'pretrain': PretrainTrainer,
     'finetune': FinetuneTrainer,
     'calibration': CalibrationTrainer,
-    'distill': DistillationTrainer,
 }
 
 VALID_MODES = list(TRAINER_MAP.keys())
@@ -52,7 +51,7 @@ def create_training_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='UniMeth Training')
 
     parser.add_argument('--mode', type=str, required=True, choices=VALID_MODES,
-                        help='Training mode: pretrain, finetune, calibration, or distill')
+                        help='Training mode: pretrain, finetune, or calibration')
 
     parser.add_argument('--bam_dir', type=str, help='Path to BAM file or directory')
     parser.add_argument('--train_pod5_dir', type=str, help='Path to training POD5 directory')
