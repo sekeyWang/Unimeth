@@ -1,8 +1,8 @@
 [project]
 name = "unimeth"
-version = "0.2.0"
+version = "0.2.1"
 authors = [{ name = "Shaokai Wang", email = "skwang@csu.edu.cn" }]
-license = { text = "BSD-3-Clause-Clear license" }
+license = { text = "BSD-3-Clause-Clear" }
 description = "Unimeth - Unified DNA Methylation Detection from Nanopore Reads"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -45,7 +45,6 @@ exclude = [
     "tools/",
     "wandb/",
     "dist/",
-    "configs/",
     "AGENTS.md",
     "AGENTS_ENV.md",
     "config_gpu14.yaml",

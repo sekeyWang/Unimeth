@@ -4,8 +4,6 @@ Unified argument parsing configuration for all modes.
 import argparse
 import datetime
 
-from unimeth import __version__
-
 
 
 def create_argument_parser(mode: str) -> argparse.ArgumentParser:
@@ -31,7 +29,7 @@ def create_argument_parser(mode: str) -> argparse.ArgumentParser:
         'inference': '''
 Examples:
   # TSV output with the default model
-  unimeth-infer \\
+  unimeth infer \\
       --pod5 data.pod5 --bam data.bam \\
       --model model.pt --out results.tsv \\
       --cpg 1 --chg 1 --chh 1 \\
@@ -45,7 +43,7 @@ Examples:
       --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
 
   # BAM output with the distilled model
-  unimeth-infer \\
+  unimeth infer \\
       --pod5 data.pod5 --bam data.bam \\
       --model distilled_model.pt --out results.bam --output_format bam \\
       --model_type distilled \\
@@ -111,8 +109,6 @@ Model Types:
     
     # Inference-specific arguments
     if mode == 'inference':
-        parser.add_argument('-v', '--version', action='version',
-                           version=f'unimeth-infer {__version__}')
         parser.add_argument('--out_dir', '--out', dest='out_dir', type=str,
                            help='Output file path (.txt for TSV, .bam for BAM)')
         parser.add_argument('--limit', type=int, default=None, 

@@ -28,8 +28,6 @@ logging.getLogger('transformers').setLevel(logging.ERROR)
 logging.getLogger('transformers.modeling_utils').setLevel(logging.ERROR)
 logging.getLogger('transformers.models.bart.modeling_bart').setLevel(logging.ERROR)
 
-from unimeth.model.datasets import Pod5BamDataset
-from unimeth.inference.engine import InferenceEngine
 from unimeth.config import create_argument_parser, merge_with_default_config, defaultconfig
 from unimeth.config.model_config import ModelConfig
 from unimeth.utils import local_print
@@ -90,12 +88,17 @@ def format_inference_args(args):
 
 def main():
     parser = create_argument_parser('inference')
+    if parser.prog.endswith('__main__.py'):
+        parser.prog = 'python -m unimeth.inference'
     args = parser.parse_args()
 
     args = merge_with_default_config(args, defaultconfig)
     args.mode = 'inference'
 
     local_print(format_inference_args(args))
+
+    from unimeth.model.datasets import Pod5BamDataset
+    from unimeth.inference.engine import InferenceEngine
 
     engine = InferenceEngine(args, Pod5BamDataset)
     engine.run(output_format=args.output_format)

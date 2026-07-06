@@ -1,6 +1,8 @@
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr
 from io import StringIO
+from pathlib import Path
+import tomllib
 
 from unimeth import __version__
 from unimeth.config.args_config import create_argument_parser
@@ -66,6 +68,7 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
         self.assertNotIn("--train_pod5", help_text)
         self.assertNotIn("--val_pod5_dir", help_text)
         self.assertNotIn("--val_pod5", help_text)
+        self.assertNotIn("--version", help_text)
 
     def test_training_pod5_aliases_stay_available_for_training_modes(self):
         for mode in ["pretrain", "finetune", "calibration"]:
@@ -80,17 +83,22 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
                 self.assertEqual(args.val_pod5_dir, "val.pod5")
 
     def test_version_comes_from_project_metadata(self):
-        self.assertEqual(__version__, "0.2.0")
+        pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        with pyproject_path.open("rb") as handle:
+            project = tomllib.load(handle)["project"]
 
-    def test_inference_parser_prints_version(self):
+        self.assertEqual(__version__, project["version"])
+
+    def test_inference_parser_rejects_version(self):
         parser = create_argument_parser("inference")
-        stdout = StringIO()
+        parser.prog = "unimeth-infer"
+        stderr = StringIO()
 
-        with self.assertRaises(SystemExit) as ctx, redirect_stdout(stdout):
+        with self.assertRaises(SystemExit) as ctx, redirect_stderr(stderr):
             parser.parse_args(["--version"])
 
-        self.assertEqual(ctx.exception.code, 0)
-        self.assertEqual(stdout.getvalue().strip(), "unimeth-infer 0.2.0")
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("unrecognized arguments: --version", stderr.getvalue())
 
 
 if __name__ == "__main__":

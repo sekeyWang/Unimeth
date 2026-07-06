@@ -49,7 +49,7 @@ conda activate unimeth
 pip install unimeth
 ```
 
-Use `unimeth --help` to list utility subcommands and `unimeth-infer --help` to validate the inference entry point.
+Use `unimeth --help` to list utility subcommands, `unimeth --version` to print the installed version.
 
 ---
 
@@ -85,11 +85,11 @@ dorado basecaller --device cuda:all --recursive --emit-moves \
 
 ### 3. Methylation Calling with Unimeth
 
-Run Unimeth to detect methylation. Use `unimeth-infer` for single-process inference. For multi-GPU inference, launch the same module with `accelerate launch -m unimeth.inference`.
+Run Unimeth to detect methylation. Use `unimeth infer` for single-process inference. For multi-GPU inference, launch the same module with `accelerate launch -m unimeth.inference`.
 
 ```bash
 # TSV output (default)
-unimeth-infer \
+unimeth infer \
 --pod5 demo/subset_18.pod5 \
 --bam demo/demo.bam \
 --model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
@@ -106,7 +106,7 @@ unimeth-infer \
 
 ```bash
 # modBAM output
-unimeth-infer \
+unimeth infer \
 --pod5 demo/subset_18.pod5 \
 --bam demo/demo.bam \
 --model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \

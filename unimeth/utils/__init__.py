@@ -14,10 +14,6 @@ from .bam_tags import (
     get_target_positions,
     get_modifications,
 )
-from .callbacks import (
-    MetricsCallback,
-    EarlyStoppingCallback,
-)
 
 __all__ = [
     # common
@@ -35,3 +31,14 @@ __all__ = [
     'MetricsCallback',
     'EarlyStoppingCallback',
 ]
+
+
+def __getattr__(name):
+    if name in {'MetricsCallback', 'EarlyStoppingCallback'}:
+        from .callbacks import MetricsCallback, EarlyStoppingCallback
+        globals().update({
+            'MetricsCallback': MetricsCallback,
+            'EarlyStoppingCallback': EarlyStoppingCallback,
+        })
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

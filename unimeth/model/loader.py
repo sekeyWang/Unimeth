@@ -20,7 +20,7 @@ def load_model(
 
     Args:
         config: ModelConfig object, config name (str), or path to JSON file.
-                If None, uses default config from configs/default.json.
+                If None, uses packaged default config.
         model_path: Path to checkpoint file (optional)
         mode: Model mode ('inference', 'finetune', 'pretrain', etc.)
         device: Target device (optional)
@@ -30,10 +30,10 @@ def load_model(
         Prepared model
     
     Examples:
-        # Use default config (configs/default.json)
+        # Use packaged default config
         model = load_model()
         
-        # Use config by name (configs/distilled.json)
+        # Use packaged config by name
         model = load_model(config="distilled")
         
         # Use config from specific JSON file
