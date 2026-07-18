@@ -32,16 +32,16 @@
 ### Option 1. Install with GPU support
 
 ```bash
-conda env create -f envs/environment-gpu.yml
+conda create -n unimeth -c conda-forge -c bioconda --strict-channel-priority unimeth pytorch-gpu cuda-version=12.4
 conda activate unimeth
 ```
 
-Unimeth is available from Bioconda, and the environment file installs Unimeth with a GPU-enabled PyTorch build from conda-forge. Adjust `cuda-version` in `envs/environment-gpu.yml` if your system requires a different CUDA runtime.
+Unimeth is available from Bioconda. The command above installs Unimeth with a GPU-enabled PyTorch build from conda-forge. Adjust `cuda-version` if your system requires a different CUDA runtime.
 
-If you already manage PyTorch separately, Unimeth can also be installed directly from Bioconda:
+If you have cloned this repository, you can use the provided environment file instead:
 
 ```bash
-conda create -n unimeth -c conda-forge -c bioconda --strict-channel-priority unimeth
+conda env create -f envs/environment-gpu.yml
 conda activate unimeth
 ```
 
