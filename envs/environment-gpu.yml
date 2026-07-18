@@ -1,0 +1,9 @@
+name: unimeth
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - unimeth
+  - pytorch-gpu
+  - cuda-version=12.4

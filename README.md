@@ -6,6 +6,8 @@
 
 [![PyPI-version](https://img.shields.io/pypi/v/unimeth)](https://pypi.org/project/unimeth/)
 [![PyPI-Downloads](https://static.pepy.tech/badge/unimeth)](https://pepy.tech/project/unimeth/)
+[![Conda Version](https://img.shields.io/conda/vn/bioconda/unimeth.svg)](https://anaconda.org/bioconda/unimeth)
+[![Conda Downloads](https://img.shields.io/conda/dn/bioconda/unimeth.svg)](https://anaconda.org/bioconda/unimeth)
 
 <!-- Workflow figure temporarily hidden while it is being updated: ![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/workflow.jpg) -->
 **Unimeth** is a unified deep learning framework for detecting DNA methylation (5mC, 6mA) from Oxford Nanopore reads. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz) and methylation calling across plant, mammalian, and bacterial genomes.
@@ -27,17 +29,20 @@
 - Python 3.12+
 - [Dorado](https://github.com/nanoporetech/dorado) for basecalling
 
-### Option 1. Install from Source
+### Option 1. Install with GPU support
 
 ```bash
-git clone https://github.com/sekeyWang/Unimeth.git
-cd Unimeth
-
-conda create -n unimeth python=3.12
+conda env create -f envs/environment-gpu.yml
 conda activate unimeth
+```
 
-pip install -e .
+Unimeth is available from Bioconda, and the environment file installs Unimeth with a GPU-enabled PyTorch build from conda-forge. Adjust `cuda-version` in `envs/environment-gpu.yml` if your system requires a different CUDA runtime.
 
+If you already manage PyTorch separately, Unimeth can also be installed directly from Bioconda:
+
+```bash
+conda create -n unimeth -c conda-forge -c bioconda --strict-channel-priority unimeth
+conda activate unimeth
 ```
 
 ### Option 2. Install via pip
@@ -47,6 +52,18 @@ conda create -n unimeth python=3.12
 conda activate unimeth
 
 pip install unimeth
+```
+
+### Option 3. Install from Source
+
+```bash
+git clone https://github.com/sekeyWang/Unimeth.git
+cd Unimeth
+
+conda create -n unimeth python=3.12
+conda activate unimeth
+
+pip install -e .
 ```
 
 Use `unimeth --help` to list utility subcommands, `unimeth --version` to print the installed version.
