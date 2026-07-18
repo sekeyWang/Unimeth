@@ -6,7 +6,6 @@ Provides multi-worker capable readers for processing nanopore data.
 import os
 from torch.utils.data import get_worker_info
 from tqdm import tqdm
-import pod5 as p5
 
 from unimeth.utils import local_print
 
@@ -30,7 +29,7 @@ class SignalReader:
     Supports multi-worker data loading with proper worker ID handling.
     """
     
-    def __init__(self, pod5_file: p5.DatasetReader, bam_file: BamReader, args):
+    def __init__(self, pod5_file, bam_file: BamReader, args):
         """
         Initialize signal reader.
         

@@ -45,7 +45,8 @@ def format_inference_args(args):
 
     sections = {
         'Input/Output': [
-            ('POD5', args.pod5_dir),
+            ('Signal', args.signal_dir),
+            ('Signal Format', args.signal_format),
             ('BAM', args.bam_dir),
             ('Model', args.model_dir),
             ('Output', args.out_dir),
@@ -86,6 +87,25 @@ def format_inference_args(args):
     return '\n'.join(lines)
 
 
+def normalize_signal_input(args, parser):
+    """Validate POD5/SLOW5 options and expose one internal signal path."""
+    pod5_dir = getattr(args, 'pod5_dir', None)
+    slow5_dir = getattr(args, 'slow5_dir', None)
+
+    if pod5_dir and slow5_dir:
+        parser.error('Use only one raw signal input option: --pod5/--pod5_dir or --slow5/--slow5_dir')
+    if slow5_dir:
+        args.signal_dir = slow5_dir
+        args.signal_format = 'SLOW5/BLOW5'
+    else:
+        args.signal_dir = pod5_dir
+        args.signal_format = 'POD5'
+
+    # Keep the legacy internal field populated until dataset names are cleaned up.
+    args.pod5_dir = args.signal_dir
+    return args
+
+
 def main():
     parser = create_argument_parser('inference')
     if parser.prog.endswith('__main__.py'):
@@ -94,6 +114,7 @@ def main():
 
     args = merge_with_default_config(args, defaultconfig)
     args.mode = 'inference'
+    args = normalize_signal_input(args, parser)
 
     local_print(format_inference_args(args))
 

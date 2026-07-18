@@ -67,6 +67,9 @@ Model Types:
                         help='Path to BAM file (must contain mv/ts tags)')
     parser.add_argument('--pod5_dir', '--pod5', dest='pod5_dir', type=str,
                         help='Path to POD5 file or directory containing raw signal files')
+    if mode == 'inference':
+        parser.add_argument('--slow5_dir', '--slow5', dest='slow5_dir', type=str,
+                            help='Path to SLOW5/BLOW5 file or directory containing raw signal files')
     parser.add_argument('--chr', type=str, default='|', 
                         help='Chromosome filter: "|"=all, "|Chr1,Chr2"=include only, "Chr1,Chr2|"=exclude')
     parser.add_argument('--max_bin_length', type=int, default=512,

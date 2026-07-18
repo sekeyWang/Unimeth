@@ -2,11 +2,11 @@ import os
 import torch
 from torch.utils.data import IterableDataset, Dataset
 from unimeth.ioutils.reader import SignalReader as Reader_raw
+from unimeth.ioutils.reader.raw_signal import collect_signal_paths, open_signal_file
 from unimeth.data.pipeline import get_datasets
 from unimeth.ioutils.reader import BamReader
 from unimeth.utils import local_print
 from itertools import zip_longest
-import pod5 as p5
 
 class MultiFileDataset(IterableDataset):
     def __init__(self, generators):
@@ -26,11 +26,7 @@ def get_read_ids(pod5_file):
 class Pod5BamDataset(IterableDataset):
     n_shards = 1
     def __init__(self, pod5_dir, bam_dir, args):
-        if os.path.isdir(pod5_dir):
-            subsets = os.listdir(pod5_dir)
-            self.pod5_dirs = [os.path.join(pod5_dir, x) for x in subsets]
-        else:
-            self.pod5_dirs = [pod5_dir]
+        self.pod5_dirs = collect_signal_paths(pod5_dir)
         self.bam_dir = bam_dir
         self.args = args
         self.args = args  # Store args for get_datasets
@@ -67,7 +63,7 @@ class Pod5BamDataset(IterableDataset):
         pod5_entries = []
         total_rank_reads = 0
         for pod5_dir in self.pod5_dirs:
-            pod5_file = p5.DatasetReader(pod5_dir, recursive=True, index=True)
+            pod5_file = open_signal_file(pod5_dir, recursive=True, index=True)
             rids = get_read_ids(pod5_file) if self.read_ids is None else self.read_ids
             rids = rids[rank::num_ranks]
             pod5_entries.append((pod5_dir, pod5_file, rids))
