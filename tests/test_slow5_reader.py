@@ -1,12 +1,30 @@
+import importlib.util
 import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
 
-from unimeth.ioutils.reader.raw_signal import is_slow5_path
-from unimeth.ioutils.reader.slow5 import Slow5Reader
+READER_DIR = Path(__file__).resolve().parents[1] / "unimeth" / "ioutils" / "reader"
+
+raw_signal_spec = importlib.util.spec_from_file_location(
+    "raw_signal_module",
+    READER_DIR / "raw_signal.py",
+)
+raw_signal_module = importlib.util.module_from_spec(raw_signal_spec)
+raw_signal_spec.loader.exec_module(raw_signal_module)
+
+slow5_spec = importlib.util.spec_from_file_location(
+    "slow5_module",
+    READER_DIR / "slow5.py",
+)
+slow5_module = importlib.util.module_from_spec(slow5_spec)
+slow5_spec.loader.exec_module(slow5_module)
+
+is_slow5_path = raw_signal_module.is_slow5_path
+Slow5Reader = slow5_module.Slow5Reader
 
 
 class FakeSlow5File:
@@ -63,7 +81,7 @@ class Slow5ReaderTest(unittest.TestCase):
     def test_reader_exposes_pod5_like_interface(self):
         fake_pyslow5 = SimpleNamespace(Open=lambda path, mode: FakeSlow5File())
 
-        with patch("unimeth.ioutils.reader.slow5.Path.is_file", return_value=True), \
+        with patch.object(slow5_module.Path, "is_file", return_value=True), \
              patch.dict(sys.modules, {"pyslow5": fake_pyslow5}):
             reader = Slow5Reader("reads.blow5")
             read = reader.get_read("read-1")
@@ -76,7 +94,7 @@ class Slow5ReaderTest(unittest.TestCase):
     def test_reader_flattens_chunked_read_ids(self):
         fake_pyslow5 = SimpleNamespace(Open=lambda path, mode: FakeChunkedReadIdsSlow5File())
 
-        with patch("unimeth.ioutils.reader.slow5.Path.is_file", return_value=True), \
+        with patch.object(slow5_module.Path, "is_file", return_value=True), \
              patch.dict(sys.modules, {"pyslow5": fake_pyslow5}):
             reader = Slow5Reader("reads.blow5")
 

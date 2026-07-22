@@ -1,5 +1,5 @@
 """
-Signal reader for extracting features from POD5 and BAM files.
+Signal reader for extracting features from raw signal and BAM files.
 
 Provides multi-worker capable readers for processing nanopore data.
 """
@@ -24,21 +24,21 @@ from .bam import BamReader
 
 class SignalReader:
     """
-    Reader for extracting signal features from POD5 and BAM files.
+    Reader for extracting signal features from raw signal and BAM files.
     
     Supports multi-worker data loading with proper worker ID handling.
     """
     
-    def __init__(self, pod5_file, bam_file: BamReader, args):
+    def __init__(self, signal_file, bam_file: BamReader, args):
         """
         Initialize signal reader.
         
         Args:
-            pod5_file: Open POD5 dataset reader
+            signal_file: Open raw signal reader with a POD5-like interface
             bam_file: Indexed BAM file reader
             args: Configuration arguments
         """
-        self.pod5_file = pod5_file
+        self.signal_file = signal_file
         self.bam_file = bam_file
         self.extractor = SignalFeatureExtractor(args)
     
@@ -82,9 +82,9 @@ class SignalReader:
             if i % num_workers != pid:
                 continue
             
-            # Get POD5 and BAM data
+            # Get raw signal and BAM data
             try:
-                pod5_read = self.pod5_file.get_read(read_id)
+                signal_read = self.signal_file.get_read(read_id)
             except Exception:
                 continue
             
@@ -95,7 +95,7 @@ class SignalReader:
                 if bam_read is None:
                     continue
                 
-                feature = self.extractor.get_feature(bam_read, pod5_read)
+                feature = self.extractor.get_feature(bam_read, signal_read)
                 if feature is None:
                     continue
                 

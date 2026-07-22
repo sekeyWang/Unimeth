@@ -8,6 +8,9 @@ from unimeth import __version__
 from unimeth.config.args_config import create_argument_parser
 from unimeth.inference.__main__ import normalize_signal_input
 
+POD5_SUFFIXES = (".pod5",)
+SLOW5_SUFFIXES = (".slow5", ".blow5")
+
 
 class InferenceArgumentAliasesTest(unittest.TestCase):
     def test_short_path_aliases_share_legacy_destinations(self):
@@ -56,7 +59,21 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
 
         self.assertEqual(args.signal_dir, "reads.blow5")
         self.assertEqual(args.signal_format, "SLOW5/BLOW5")
+        self.assertEqual(args.signal_suffixes, SLOW5_SUFFIXES)
+        self.assertEqual(args.signal_label, "SLOW5/BLOW5")
         self.assertEqual(args.pod5_dir, "reads.blow5")
+
+    def test_pod5_normalizes_to_signal_input(self):
+        parser = create_argument_parser("inference")
+        args = parser.parse_args(["--pod5", "reads.pod5"])
+
+        normalize_signal_input(args, parser)
+
+        self.assertEqual(args.signal_dir, "reads.pod5")
+        self.assertEqual(args.signal_format, "POD5")
+        self.assertEqual(args.signal_suffixes, POD5_SUFFIXES)
+        self.assertEqual(args.signal_label, "POD5")
+        self.assertEqual(args.pod5_dir, "reads.pod5")
 
     def test_pod5_and_slow5_are_mutually_exclusive(self):
         parser = create_argument_parser("inference")

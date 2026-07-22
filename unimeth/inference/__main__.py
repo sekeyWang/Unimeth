@@ -32,6 +32,9 @@ from unimeth.config import create_argument_parser, merge_with_default_config, de
 from unimeth.config.model_config import ModelConfig
 from unimeth.utils import local_print
 
+POD5_SUFFIXES = ('.pod5',)
+SLOW5_SUFFIXES = ('.slow5', '.blow5')
+
 
 def get_model_info(args):
     """Get model architecture info from unimeth.model config."""
@@ -97,9 +100,12 @@ def normalize_signal_input(args, parser):
     if slow5_dir:
         args.signal_dir = slow5_dir
         args.signal_format = 'SLOW5/BLOW5'
+        args.signal_suffixes = SLOW5_SUFFIXES
     else:
         args.signal_dir = pod5_dir
         args.signal_format = 'POD5'
+        args.signal_suffixes = POD5_SUFFIXES
+    args.signal_label = args.signal_format
 
     # Keep the legacy internal field populated until dataset names are cleaned up.
     args.pod5_dir = args.signal_dir
