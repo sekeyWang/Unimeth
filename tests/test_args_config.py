@@ -147,6 +147,17 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
 
         self.assertEqual(__version__, project["version"])
 
+    def test_slow5_dependency_is_optional(self):
+        pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        with pyproject_path.open("rb") as handle:
+            pyproject = tomllib.load(handle)
+
+        dependencies = pyproject["project"]["dependencies"]
+        optional_dependencies = pyproject["project"]["optional-dependencies"]
+
+        self.assertNotIn("pyslow5>=1.4.0", dependencies)
+        self.assertIn("pyslow5>=1.4.0", optional_dependencies["slow5"])
+
     def test_inference_parser_rejects_version(self):
         parser = create_argument_parser("inference")
         parser.prog = "unimeth-infer"

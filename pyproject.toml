@@ -16,10 +16,12 @@ dependencies = [
     "pod5>=0.3",
     "scikit-learn>=1.5",
     "scipy>=1.13",
-    "pyslow5>=1.4.0",
 ]
 
 [project.optional-dependencies]
+slow5 = [
+    "pyslow5>=1.4.0",
+]
 train = [
     "wandb",
     "datasets",

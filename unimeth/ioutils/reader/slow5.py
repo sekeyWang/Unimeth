@@ -17,7 +17,8 @@ def _import_pyslow5():
     except ImportError as exc:
         raise ImportError(
             "Reading SLOW5/BLOW5 input requires pyslow5. "
-            "Install it with `pip install pyslow5`."
+            "Install it with `pip install \"unimeth[slow5]\"` "
+            "or `conda install -c bioconda pyslow5`."
         ) from exc
     except ValueError as exc:
         if "numpy.dtype size changed" in str(exc):
@@ -82,16 +83,19 @@ class Slow5Reader:
         self.path = str(path)
         self._slow5 = _open_slow5(path)
         self.read_ids = []
+        self._read_id_set = set()
         self._build_index()
 
     def _build_index(self):
         if hasattr(self._slow5, "get_read_ids"):
             self.read_ids = list(_flatten_read_ids(self._slow5.get_read_ids()))
+            self._read_id_set = set(self.read_ids)
             return
 
         for record in self._slow5.seq_reads():
             read_id = _record_read_id(record)
             self.read_ids.append(read_id)
+        self._read_id_set = set(self.read_ids)
 
     def get_read(self, read_id):
         read_id = str(read_id)
@@ -106,6 +110,9 @@ class Slow5Reader:
         )
 
     def _fetch_record(self, read_id):
+        if self._read_id_set and read_id not in self._read_id_set:
+            return None
+
         for kwargs in ({"aux": "all", "pA": False}, {"aux": "all"}, {}):
             try:
                 return self._slow5.get_read(str(read_id), **kwargs)

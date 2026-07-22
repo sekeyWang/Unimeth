@@ -72,6 +72,22 @@ class FakeChunkedReadIdsSlow5File(FakeSlow5File):
         return [["read-1", "read-2"], 4000]
 
 
+class FakeIndexedSlow5File(FakeSlow5File):
+    def __init__(self):
+        super().__init__()
+        self.seq_reads_called = False
+
+    def get_read_ids(self):
+        return ["read-1"]
+
+    def get_read(self, read_id, aux="all"):
+        raise KeyError(read_id)
+
+    def seq_reads(self):
+        self.seq_reads_called = True
+        return iter(self.records)
+
+
 class Slow5ReaderTest(unittest.TestCase):
     def test_detects_slow5_and_blow5_suffixes(self):
         self.assertTrue(is_slow5_path("reads.slow5"))
@@ -99,6 +115,25 @@ class Slow5ReaderTest(unittest.TestCase):
             reader = Slow5Reader("reads.blow5")
 
         self.assertEqual(reader.read_ids, ["read-1", "read-2"])
+
+    def test_reader_does_not_scan_file_when_read_id_is_absent_from_index(self):
+        fake_file = FakeIndexedSlow5File()
+        fake_pyslow5 = SimpleNamespace(Open=lambda path, mode: fake_file)
+
+        with patch.object(slow5_module.Path, "is_file", return_value=True), \
+             patch.dict(sys.modules, {"pyslow5": fake_pyslow5}):
+            reader = Slow5Reader("reads.blow5")
+            with self.assertRaises(KeyError):
+                reader.get_read("missing-read")
+
+        self.assertFalse(fake_file.seq_reads_called)
+
+    def test_missing_pyslow5_points_to_slow5_extra(self):
+        with patch.dict(sys.modules, {"pyslow5": None}):
+            with self.assertRaises(ImportError) as ctx:
+                slow5_module._import_pyslow5()
+
+        self.assertIn("unimeth[slow5]", str(ctx.exception))
 
 
 if __name__ == "__main__":
