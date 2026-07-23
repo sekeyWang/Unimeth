@@ -6,6 +6,10 @@ import tomllib
 
 from unimeth import __version__
 from unimeth.config.args_config import create_argument_parser
+from unimeth.inference.__main__ import normalize_signal_input
+
+POD5_SUFFIXES = (".pod5",)
+SLOW5_SUFFIXES = (".slow5", ".blow5")
 
 
 class InferenceArgumentAliasesTest(unittest.TestCase):
@@ -27,6 +31,60 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
         self.assertEqual(args.out_dir, "predictions.tsv")
         self.assertEqual(args.tsv_out_dir, "predictions.tsv")
         self.assertEqual(args.bam_out_dir, "predictions.bam")
+
+    def test_slow5_aliases_use_separate_destination(self):
+        parser = create_argument_parser("inference")
+
+        args = parser.parse_args([
+            "--slow5", "reads.blow5",
+            "--bam", "reads.bam",
+        ])
+
+        self.assertIsNone(args.pod5_dir)
+        self.assertEqual(args.slow5_dir, "reads.blow5")
+
+    def test_training_help_omits_slow5_options(self):
+        for mode in ["pretrain", "finetune", "calibration"]:
+            with self.subTest(mode=mode):
+                help_text = create_argument_parser(mode).format_help()
+
+                self.assertNotIn("--slow5", help_text)
+                self.assertNotIn("--slow5_dir", help_text)
+
+    def test_slow5_normalizes_to_signal_input(self):
+        parser = create_argument_parser("inference")
+        args = parser.parse_args(["--slow5", "reads.blow5"])
+
+        normalize_signal_input(args, parser)
+
+        self.assertEqual(args.signal_dir, "reads.blow5")
+        self.assertEqual(args.signal_format, "SLOW5/BLOW5")
+        self.assertEqual(args.signal_suffixes, SLOW5_SUFFIXES)
+        self.assertEqual(args.signal_label, "SLOW5/BLOW5")
+        self.assertEqual(args.pod5_dir, "reads.blow5")
+
+    def test_pod5_normalizes_to_signal_input(self):
+        parser = create_argument_parser("inference")
+        args = parser.parse_args(["--pod5", "reads.pod5"])
+
+        normalize_signal_input(args, parser)
+
+        self.assertEqual(args.signal_dir, "reads.pod5")
+        self.assertEqual(args.signal_format, "POD5")
+        self.assertEqual(args.signal_suffixes, POD5_SUFFIXES)
+        self.assertEqual(args.signal_label, "POD5")
+        self.assertEqual(args.pod5_dir, "reads.pod5")
+
+    def test_pod5_and_slow5_are_mutually_exclusive(self):
+        parser = create_argument_parser("inference")
+        stderr = StringIO()
+        args = parser.parse_args(["--pod5", "reads.pod5", "--slow5", "reads.blow5"])
+
+        with self.assertRaises(SystemExit) as ctx, redirect_stderr(stderr):
+            normalize_signal_input(args, parser)
+
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("Use only one raw signal input option", stderr.getvalue())
 
     def test_legacy_path_options_still_work(self):
         parser = create_argument_parser("inference")
@@ -88,6 +146,17 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
             project = tomllib.load(handle)["project"]
 
         self.assertEqual(__version__, project["version"])
+
+    def test_slow5_dependency_is_optional(self):
+        pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        with pyproject_path.open("rb") as handle:
+            pyproject = tomllib.load(handle)
+
+        dependencies = pyproject["project"]["dependencies"]
+        optional_dependencies = pyproject["project"]["optional-dependencies"]
+
+        self.assertNotIn("pyslow5>=1.4.0", dependencies)
+        self.assertIn("pyslow5>=1.4.0", optional_dependencies["slow5"])
 
     def test_inference_parser_rejects_version(self):
         parser = create_argument_parser("inference")

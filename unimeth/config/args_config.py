@@ -28,24 +28,24 @@ def create_argument_parser(mode: str) -> argparse.ArgumentParser:
     epilogs = {
         'inference': '''
 Examples:
-  # TSV output with the default model
+  # BAM output with the default model
   unimeth infer \\
       --pod5 data.pod5 --bam data.bam \\
-      --model model.pt --out results.tsv \\
+      --model model.pt --out results.bam \\
       --cpg 1 --chg 1 --chh 1 \\
       --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
 
-  # Multi-GPU TSV output
+  # Multi-GPU BAM output
   accelerate launch --num_processes 8 -m unimeth.inference \\
       --pod5 data.pod5 --bam data.bam \\
-      --model model.pt --out results.tsv \\
+      --model model.pt --out results.bam \\
       --cpg 1 --chg 1 --chh 1 \\
       --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
 
-  # BAM output with the distilled model
+  # TSV output with the distilled model
   unimeth infer \\
       --pod5 data.pod5 --bam data.bam \\
-      --model distilled_model.pt --out results.bam --output_format bam \\
+      --model distilled_model.pt --out results.tsv --output_format tsv \\
       --model_type distilled \\
       --cpg 1 --batch_size 512 \\
       --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
@@ -67,6 +67,9 @@ Model Types:
                         help='Path to BAM file (must contain mv/ts tags)')
     parser.add_argument('--pod5_dir', '--pod5', dest='pod5_dir', type=str,
                         help='Path to POD5 file or directory containing raw signal files')
+    if mode == 'inference':
+        parser.add_argument('--slow5_dir', '--slow5', dest='slow5_dir', type=str,
+                            help='Path to SLOW5/BLOW5 file or directory containing raw signal files')
     parser.add_argument('--chr', type=str, default='|', 
                         help='Chromosome filter: "|"=all, "|Chr1,Chr2"=include only, "Chr1,Chr2|"=exclude')
     parser.add_argument('--max_bin_length', type=int, default=512,
@@ -114,7 +117,7 @@ Model Types:
         parser.add_argument('--limit', type=int, default=None, 
                            help='Process only first N batches (for quick testing)')
         parser.add_argument('--output_format', type=str, choices=['tsv', 'bam', 'both'],
-                           default='tsv', help='Output format: tsv (default), bam, or both (dual output for verification)')
+                           default='bam', help='Output format: bam (default), tsv, or both (dual output for verification)')
         parser.add_argument('--tsv_out_dir', '--tsv_out', dest='tsv_out_dir', type=str, default=None,
                            help='TSV output path when --output_format both (defaults to --out_dir)')
         parser.add_argument('--gzip', action='store_true',

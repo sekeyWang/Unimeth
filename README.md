@@ -18,7 +18,7 @@
 
 - **Unified Detection**: Supports DNA 5mC (CpG, CHG, CHH) and 6mA detection.
 - **Multi-Chemistry Support**: Compatible with R9.4.1, R10.4.1 4kHz, and R10.4.1 5kHz chemistries.
-- **Easy-to-Use**: Standard input/output formats (POD5 and BAM, BED).
+- **Easy-to-Use**: Standard input/output formats (POD5/SLOW5/BLOW5 and BAM, BED).
 
 ---
 
@@ -53,6 +53,8 @@ conda activate unimeth
 
 pip install unimeth
 ```
+
+For SLOW5/BLOW5 input, install `pyslow5` separately with `pip install pyslow5`, or install the optional pip extra with `pip install "unimeth[slow5]"`.
 
 ### Option 3. Install from Source
 
@@ -105,7 +107,20 @@ dorado basecaller --device cuda:all --recursive --emit-moves \
 Run Unimeth to detect methylation. Use `unimeth infer` for single-process inference. For multi-GPU inference, launch the same module with `accelerate launch -m unimeth.inference`.
 
 ```bash
-# TSV output (default)
+# modBAM output (default)
+unimeth infer \
+--pod5 demo/subset_18.pod5 \
+--bam demo/demo.bam \
+--model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
+--out results/arab.bam \
+--cpg 1 \
+--batch_size 256 \
+--pore_type R10.4.1 \
+--frequency 5khz
+```
+
+```bash
+# TSV output
 unimeth infer \
 --pod5 demo/subset_18.pod5 \
 --bam demo/demo.bam \
@@ -117,26 +132,11 @@ unimeth infer \
 --chh 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
---frequency 5khz \
---dorado_version 0.71
-```
-
-```bash
-# modBAM output
-unimeth infer \
---pod5 demo/subset_18.pod5 \
---bam demo/demo.bam \
---model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
---out results/arab.bam \
---output_format bam \
---cpg 1 \
---batch_size 256 \
---pore_type R10.4.1 \
---frequency 5khz \
---dorado_version 0.71
+--frequency 5khz
 ```
 
 The examples set `--batch_size 256` for conservative demo memory usage; if omitted, the current code default is `512`. Use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam` to generate TSV and modBAM simultaneously.
+Use `--slow5 reads.slow5` or `--slow5 reads.blow5` instead of `--pod5` for SLOW5/BLOW5 input.
 
 #### Output
 
@@ -186,13 +186,14 @@ For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.0
 | Input Format | Description |
 |--------------|-------------|
 | POD5         | Raw nanopore signals |
-| BAM          | Basecalled and aligned reads |
+| SLOW5/BLOW5  | Raw nanopore signals (`--slow5`; inference only) |
+| BAM          | Basecalled reads, aligned or unaligned |
 
 
 | Output Format | Description |
 |---------------|-------------|
-| tsv           | Per-read methylation calls (`--output_format tsv`, default) |
-| modBAM        | BAM with MM/ML methylation tags (`--output_format bam`) |
+| modBAM        | BAM with MM/ML methylation tags (`--output_format bam`, default) |
+| tsv           | Per-read methylation calls (`--output_format tsv`) |
 | both          | TSV and modBAM simultaneously (`--output_format both`; use `--tsv_out`/`--tsv_out_dir` and `--bam_out`/`--bam_out_dir` for separate paths) |
 | bedmethyl     | Site-level methylation frequencies (post-processing) |
 ---

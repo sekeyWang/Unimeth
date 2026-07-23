@@ -1,6 +1,6 @@
 [project]
 name = "unimeth"
-version = "0.2.1"
+version = "0.2.2"
 authors = [{ name = "Shaokai Wang", email = "skwang@csu.edu.cn" }]
 license = { text = "BSD-3-Clause-Clear" }
 description = "Unimeth - Unified DNA Methylation Detection from Nanopore Reads"
@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+slow5 = [
+    "pyslow5>=1.4.0",
+]
 train = [
     "wandb",
     "datasets",
