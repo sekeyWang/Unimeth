@@ -241,8 +241,15 @@ class InferenceEngine:
 
                     total_batches += 1
 
-                    # Handle reads_complete marker before model inference
-                    if isinstance(batch, dict) and batch.get('__reads_complete__', False):
+                    has_reads_complete_marker = (
+                        isinstance(batch, dict)
+                        and batch.get('__reads_complete__', False)
+                    )
+                    has_batch_data = isinstance(batch, dict) and 'signals' in batch
+
+                    # Handle pure reads_complete marker before model inference.
+                    # If the marker is co-batched with data, process the data first.
+                    if has_reads_complete_marker and not has_batch_data:
                         if bam_writer is not None:
                             bam_writer.on_reads_complete()
                         continue
@@ -294,7 +301,7 @@ class InferenceEngine:
                     total_samples += samples_written
 
                     # Flush BAM buffer when marker was co-batched with data
-                    if batch.get('__reads_complete__', False) and bam_writer is not None:
+                    if has_reads_complete_marker and bam_writer is not None:
                         bam_writer.on_reads_complete()
 
                     if batch_idx == 0:
