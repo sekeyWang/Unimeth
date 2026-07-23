@@ -107,7 +107,20 @@ dorado basecaller --device cuda:all --recursive --emit-moves \
 Run Unimeth to detect methylation. Use `unimeth infer` for single-process inference. For multi-GPU inference, launch the same module with `accelerate launch -m unimeth.inference`.
 
 ```bash
-# TSV output (default)
+# modBAM output (default)
+unimeth infer \
+--pod5 demo/subset_18.pod5 \
+--bam demo/demo.bam \
+--model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
+--out results/arab.bam \
+--cpg 1 \
+--batch_size 256 \
+--pore_type R10.4.1 \
+--frequency 5khz
+```
+
+```bash
+# TSV output
 unimeth infer \
 --pod5 demo/subset_18.pod5 \
 --bam demo/demo.bam \
@@ -117,20 +130,6 @@ unimeth infer \
 --cpg 1 \
 --chg 1 \
 --chh 1 \
---batch_size 256 \
---pore_type R10.4.1 \
---frequency 5khz
-```
-
-```bash
-# modBAM output
-unimeth infer \
---pod5 demo/subset_18.pod5 \
---bam demo/demo.bam \
---model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
---out results/arab.bam \
---output_format bam \
---cpg 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
 --frequency 5khz
@@ -188,13 +187,13 @@ For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.0
 |--------------|-------------|
 | POD5         | Raw nanopore signals |
 | SLOW5/BLOW5  | Raw nanopore signals (`--slow5`; inference only) |
-| BAM          | Basecalled and aligned reads |
+| BAM          | Basecalled reads, aligned or unaligned |
 
 
 | Output Format | Description |
 |---------------|-------------|
-| tsv           | Per-read methylation calls (`--output_format tsv`, default) |
-| modBAM        | BAM with MM/ML methylation tags (`--output_format bam`) |
+| modBAM        | BAM with MM/ML methylation tags (`--output_format bam`, default) |
+| tsv           | Per-read methylation calls (`--output_format tsv`) |
 | both          | TSV and modBAM simultaneously (`--output_format both`; use `--tsv_out`/`--tsv_out_dir` and `--bam_out`/`--bam_out_dir` for separate paths) |
 | bedmethyl     | Site-level methylation frequencies (post-processing) |
 ---

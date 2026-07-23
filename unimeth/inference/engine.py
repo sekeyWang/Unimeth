@@ -161,13 +161,13 @@ class InferenceEngine:
         
         return all_preds, all_methy
     
-    def run(self, output_format: str = 'tsv'):
+    def run(self, output_format: str = 'bam'):
         try:
             return self._run_impl(output_format=output_format)
         finally:
             self._cleanup_bam_index()
 
-    def _run_impl(self, output_format: str = 'tsv'):
+    def _run_impl(self, output_format: str = 'bam'):
         """
         Run inference with specified output format.
 
