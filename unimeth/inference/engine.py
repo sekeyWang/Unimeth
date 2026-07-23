@@ -55,6 +55,7 @@ class InferenceEngine:
 
         )
         self.model = self.accelerator.prepare(self.model)
+        self.model.eval()
     
     def setup_dataloader(self):
         """Setup dataset and dataloader for inference."""
