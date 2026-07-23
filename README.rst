@@ -1,6 +1,12 @@
 Changelog
 =========
 
+v0.2.2
+------
+- Add SLOW5/BLOW5 input support for inference
+- Refine BAM index caching
+- Fix incomplete MM/ML tags caused by skipped co-batched completion markers
+
 v0.2.1
 ------
 - support unaligned BAM input
