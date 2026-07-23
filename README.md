@@ -117,8 +117,7 @@ unimeth infer \
 --chh 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
---frequency 5khz \
---dorado_version 0.71
+--frequency 5khz
 ```
 
 ```bash
@@ -132,8 +131,7 @@ unimeth infer \
 --cpg 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
---frequency 5khz \
---dorado_version 0.71
+--frequency 5khz
 ```
 
 The examples set `--batch_size 256` for conservative demo memory usage; if omitted, the current code default is `512`. Use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam` to generate TSV and modBAM simultaneously.

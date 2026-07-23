@@ -2,11 +2,11 @@ import os
 import torch
 from torch.utils.data import IterableDataset, Dataset
 from unimeth.ioutils.reader import SignalReader as Reader_raw
+from unimeth.ioutils.reader.raw_signal import POD5_SUFFIXES, collect_signal_paths, open_signal_file
 from unimeth.data.pipeline import get_datasets
 from unimeth.ioutils.reader import BamReader
 from unimeth.utils import local_print
 from itertools import zip_longest
-import pod5 as p5
 
 class MultiFileDataset(IterableDataset):
     def __init__(self, generators):
@@ -16,9 +16,9 @@ class MultiFileDataset(IterableDataset):
             for data in binned_data:
                 yield data
 
-def get_read_ids(pod5_file):
+def get_read_ids(signal_file):
     read_ids = []
-    for x in pod5_file.read_ids:
+    for x in signal_file.read_ids:
         read_ids.append(x)
     return read_ids
 
@@ -26,11 +26,14 @@ def get_read_ids(pod5_file):
 class Pod5BamDataset(IterableDataset):
     n_shards = 1
     def __init__(self, pod5_dir, bam_dir, args):
-        if os.path.isdir(pod5_dir):
-            subsets = os.listdir(pod5_dir)
-            self.pod5_dirs = [os.path.join(pod5_dir, x) for x in subsets]
-        else:
-            self.pod5_dirs = [pod5_dir]
+        signal_suffixes = getattr(args, 'signal_suffixes', POD5_SUFFIXES)
+        signal_label = getattr(args, 'signal_label', 'POD5')
+        self.pod5_dirs = collect_signal_paths(
+            pod5_dir,
+            suffixes=signal_suffixes,
+            label=signal_label,
+        )
+        self.signal_paths = self.pod5_dirs
         self.bam_dir = bam_dir
         self.args = args
         self.args = args  # Store args for get_datasets
@@ -64,13 +67,13 @@ class Pod5BamDataset(IterableDataset):
 
         # Two-pass: collect all rank-level read_ids first so we can compute the
         # per-worker count and set reads_per_flush accordingly.
-        pod5_entries = []
+        signal_entries = []
         total_rank_reads = 0
-        for pod5_dir in self.pod5_dirs:
-            pod5_file = p5.DatasetReader(pod5_dir, recursive=True, index=True)
-            rids = get_read_ids(pod5_file) if self.read_ids is None else self.read_ids
+        for signal_path in self.signal_paths:
+            signal_file = open_signal_file(signal_path, recursive=True, index=True)
+            rids = get_read_ids(signal_file) if self.read_ids is None else self.read_ids
             rids = rids[rank::num_ranks]
-            pod5_entries.append((pod5_dir, pod5_file, rids))
+            signal_entries.append((signal_path, signal_file, rids))
             total_rank_reads += len(rids)
 
         # Raise reads_per_flush above per-worker count to eliminate mid-stream flushes.
@@ -78,9 +81,9 @@ class Pod5BamDataset(IterableDataset):
         if per_worker_reads >= self.binning.reads_per_flush:
             self.binning.reads_per_flush = per_worker_reads + 1
 
-        for pod5_dir, pod5_file, read_ids in pod5_entries:
-            subset_name = pod5_dir.split('/')[-1]
-            reader = Reader_raw(pod5_file, bam_file=bam_file, args=self.args)
+        for signal_path, signal_file, read_ids in signal_entries:
+            subset_name = os.path.basename(signal_path)
+            reader = Reader_raw(signal_file, bam_file=bam_file, args=self.args)
             for feature in reader.get_features(subset_name, read_ids):
                 for dataset in get_datasets(feature, self.args):
                     for binned_data in self.binning.get_data(dataset):

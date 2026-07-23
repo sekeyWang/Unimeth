@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+slow5 = [
+    "pyslow5>=1.4.0",
+]
 train = [
     "wandb",
     "datasets",
