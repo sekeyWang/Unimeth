@@ -29,7 +29,7 @@
 - Python 3.12+
 - [Dorado](https://github.com/nanoporetech/dorado) for basecalling
 
-### Option 1. Install with GPU support
+### Option 1. Install via Bioconda
 
 ```bash
 conda create -n unimeth -c conda-forge -c bioconda --strict-channel-priority unimeth pytorch-gpu cuda-version=12.4
