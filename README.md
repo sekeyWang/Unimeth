@@ -29,11 +29,12 @@
 - Python 3.12+
 - [Dorado](https://github.com/nanoporetech/dorado) for basecalling
 
-### Option 1. Install with GPU support
+### Option 1. Install via Bioconda
 
 ```bash
 conda create -n unimeth -c conda-forge -c bioconda --strict-channel-priority unimeth pytorch-gpu cuda-version=12.4
 conda activate unimeth
+pip install --no-deps "pyslow5>=1.4.0"
 ```
 
 Unimeth is available from Bioconda. The command above installs Unimeth with a GPU-enabled PyTorch build from conda-forge. Adjust `cuda-version` if your system requires a different CUDA runtime.

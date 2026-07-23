@@ -7,3 +7,6 @@ dependencies:
   - unimeth
   - pytorch-gpu
   - cuda-version=12.4
+  - pip
+  - pip:
+      - pyslow5>=1.4.0
