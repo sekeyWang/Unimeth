@@ -17,8 +17,10 @@ def _import_pyslow5():
     except ImportError as exc:
         raise ImportError(
             "Reading SLOW5/BLOW5 input requires pyslow5. "
-            "Install it with `pip install \"unimeth[slow5]\"` "
-            "or `conda install -c bioconda pyslow5`."
+            "Install pyslow5 separately with `pip install pyslow5` "
+            "or `conda install -c bioconda pyslow5`. "
+            "When installing UniMeth with pip, you can also include pyslow5 "
+            "with `pip install \"unimeth[slow5]\"`."
         ) from exc
     except ValueError as exc:
         if "numpy.dtype size changed" in str(exc):
