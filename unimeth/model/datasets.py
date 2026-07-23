@@ -39,7 +39,6 @@ class Pod5BamDataset(IterableDataset):
         self.args = args  # Store args for get_datasets
         self.binning = Binning(args)
         self.read_ids = None
-        BamReader(self.bam_dir, force_rebuild_index=True)
     
     def set_read_ids(self, read_ids):
         self.read_ids = read_ids
@@ -63,7 +62,12 @@ class Pod5BamDataset(IterableDataset):
         worker_info = _get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
 
-        bam_file = BamReader(self.bam_dir, force_rebuild_index=False)
+        bam_file = BamReader(
+            self.bam_dir,
+            force_rebuild_index=False,
+            index_cache_dir=getattr(self.args, 'bam_index_cache_dir', None),
+            allow_index_build=False,
+        )
 
         # Two-pass: collect all rank-level read_ids first so we can compute the
         # per-worker count and set reads_per_flush accordingly.

@@ -21,7 +21,7 @@ from unimeth.config import tokenizer, get_total_stride
 from unimeth.model.datasets import collate_fn
 from unimeth.model.loader import load_model
 from unimeth.utils import local_print
-from unimeth.ioutils.reader.bam import BamReader
+from unimeth.ioutils.reader.bam import BamReader, cleanup_bam_index
 from unimeth.ioutils.writer.bam_finalize import (
     bam_has_references,
     bam_part_glob,
@@ -43,6 +43,9 @@ class InferenceEngine:
         self.dataloader = None
         self._methylated_idx = tokenizer['+']
         self._unmethylated_idx = tokenizer['-']
+        self._bam_index_file = None
+        self._bam_index_is_temporary = False
+        self._bam_index_created = False
     
     def load_model(self):
         """Load and prepare model for inference."""
@@ -83,6 +86,51 @@ class InferenceEngine:
             prefetch_factor=2,
             persistent_workers=False
         )
+
+    def _get_bam_index_cache_dir(self, output_format: str) -> str:
+        """Use the selected output file directory for temporary fallback index cache."""
+        if output_format in ('bam', 'both'):
+            output_path = getattr(self.args, 'bam_out_dir', None) or getattr(self.args, 'out_dir', None)
+        else:
+            output_path = getattr(self.args, 'tsv_out_dir', None)
+
+        if output_path is None:
+            output_path = getattr(self.args, 'out_dir', None)
+        if output_path is None:
+            return os.getcwd()
+        return os.path.dirname(os.path.abspath(output_path)) or os.getcwd()
+
+    def _prepare_bam_index(self, output_format: str):
+        """Build or load the BAM read-id index before DataLoader workers start."""
+        cache_dir = self._get_bam_index_cache_dir(output_format)
+        self.args.bam_index_cache_dir = cache_dir
+
+        if self.accelerator.is_main_process:
+            bam_reader = BamReader(
+                self.args.bam_dir,
+                force_rebuild_index=False,
+                index_cache_dir=cache_dir,
+            )
+            self._bam_index_file = bam_reader.bam_index_file
+            self._bam_index_is_temporary = bam_reader.bam_index_is_temporary
+            self._bam_index_created = bam_reader.bam_index_created
+            try:
+                bam_reader.bam_file.close()
+            except Exception:
+                pass
+
+        self.accelerator.wait_for_everyone()
+
+    def _cleanup_bam_index(self):
+        """Remove the temporary fallback BAM index created by this inference run."""
+        if not self.accelerator.is_main_process:
+            return
+        cleanup_bam_index(
+            self._bam_index_file,
+            is_temporary=self._bam_index_is_temporary,
+            created_by_this_run=self._bam_index_created,
+        )
+        self._bam_index_created = False
     
     def _extract_predictions(self, decoder_input_ids, logits, patch_pos):
         """Extract methylation predictions from unimeth.model outputs (fully vectorized)."""
@@ -114,6 +162,12 @@ class InferenceEngine:
         return all_preds, all_methy
     
     def run(self, output_format: str = 'tsv'):
+        try:
+            return self._run_impl(output_format=output_format)
+        finally:
+            self._cleanup_bam_index()
+
+    def _run_impl(self, output_format: str = 'tsv'):
         """
         Run inference with specified output format.
 
@@ -124,6 +178,7 @@ class InferenceEngine:
         if not getattr(self.args, 'show_reading_progress', False):
             os.environ['UNIMETH_DISABLE_READING_PROGRESS'] = '1'
 
+        self._prepare_bam_index(output_format)
         self.setup_dataloader()
         self.load_model()
 
@@ -148,12 +203,12 @@ class InferenceEngine:
             from unimeth.ioutils.writer.bam_aggregation import AggregationBAMWriter
             bam_path = normalize_bam_path(self.args.bam_out_dir if self.args.bam_out_dir else self.args.out_dir)
             rank_bam_path = bam_part_path(bam_path, rank)
-            # Only rank 0 rebuilds the index to avoid race condition when all ranks
-            # write to the same cache file simultaneously.
-            if is_main:
-                BamReader(self.args.bam_dir, force_rebuild_index=True)
-            self.accelerator.wait_for_everyone()
-            bam_reader = BamReader(self.args.bam_dir, force_rebuild_index=False)
+            bam_reader = BamReader(
+                self.args.bam_dir,
+                force_rebuild_index=False,
+                index_cache_dir=getattr(self.args, 'bam_index_cache_dir', None),
+                allow_index_build=False,
+            )
             bam_writer = AggregationBAMWriter(
                 output_path=str(rank_bam_path),
                 template_bam_path=self.args.bam_dir,
@@ -296,6 +351,8 @@ class InferenceEngine:
                         local_print(f"Final BAM: {bam_path}")
                     except Exception as e:
                         local_print(f"Warning: Failed to finalize BAM files: {e}")
+
+        self.accelerator.wait_for_everyone()
     
     # Backward compatibility alias
     def run_bam(self):

@@ -4,6 +4,7 @@ BAM file reader with indexing support.
 Provides efficient random access to BAM records and methylation prediction loading.
 """
 import os
+import hashlib
 import pickle
 from typing import Dict, List
 
@@ -12,6 +13,97 @@ import pysam
 from unimeth.utils import local_print
 from unimeth.utils.bam_tags import get_mod_config, get_target_positions
 from unimeth.data.coords import get_ref_pos
+
+
+BAM_INDEX_SUFFIX = ".unimeth.idx"
+
+
+def default_bam_index_file(bam_path: str) -> str:
+    """Return the preferred persistent UniMeth index path next to the BAM file."""
+    return f"{bam_path}{BAM_INDEX_SUFFIX}"
+
+
+def _bam_index_hash(bam_path: str) -> str:
+    absolute_path = os.path.abspath(bam_path)
+    try:
+        stat = os.stat(bam_path)
+        payload = f"{absolute_path}:{stat.st_size}:{stat.st_mtime_ns}"
+    except OSError:
+        payload = absolute_path
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _can_write_index_directory(index_path: str) -> bool:
+    index_dir = os.path.dirname(os.path.abspath(index_path)) or "."
+    probe_path = os.path.join(index_dir, f".unimeth-index-write-test.{os.getpid()}")
+    try:
+        fd = os.open(probe_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+        os.remove(probe_path)
+        return not os.path.exists(index_path) or os.access(index_path, os.W_OK)
+    except OSError:
+        try:
+            if os.path.exists(probe_path):
+                os.remove(probe_path)
+        except OSError:
+            pass
+        return False
+
+
+def _fallback_bam_index_file(bam_path: str, cache_dir: str = None) -> str:
+    root_dir = cache_dir or os.getcwd()
+    filename = os.path.basename(os.path.normpath(bam_path))
+    digest = _bam_index_hash(bam_path)
+    return os.path.join(root_dir, "data_cache", "bam_index", f"{filename}.{digest}{BAM_INDEX_SUFFIX}")
+
+
+def resolve_bam_index_file(
+    bam_path: str,
+    cache_dir: str = None,
+    require_writable: bool = True,
+) -> tuple[str, bool]:
+    """
+    Resolve the UniMeth BAM index file.
+
+    Returns:
+        Tuple of (index_path, is_temporary). Persistent indexes live next to the
+        BAM file; temporary fallback indexes live under cache_dir/data_cache.
+    """
+    preferred_index = default_bam_index_file(bam_path)
+    if not require_writable and os.path.exists(preferred_index):
+        return preferred_index, False
+    if _can_write_index_directory(preferred_index):
+        return preferred_index, False
+    return _fallback_bam_index_file(bam_path, cache_dir=cache_dir), True
+
+
+def _index_is_stale(bam_path: str, index_path: str) -> bool:
+    if not os.path.exists(index_path):
+        return True
+    try:
+        return os.path.getmtime(index_path) < os.path.getmtime(bam_path)
+    except OSError:
+        return True
+
+
+def cleanup_bam_index(index_path: str, is_temporary: bool, created_by_this_run: bool) -> None:
+    """Remove a temporary fallback index that was created by this run."""
+    if not (index_path and is_temporary and created_by_this_run):
+        return
+    try:
+        os.remove(index_path)
+        parent = os.path.dirname(index_path)
+        try:
+            data_cache_dir = os.path.dirname(parent)
+            if os.path.basename(parent) == "bam_index" and os.path.basename(data_cache_dir) == "data_cache":
+                os.rmdir(parent)
+                os.rmdir(data_cache_dir)
+        except OSError:
+            pass
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        local_print(f"Warning: failed to remove temporary BAM index {index_path}: {exc}")
 
 
 class BamReader:
@@ -26,28 +118,64 @@ class BamReader:
         bam_index: Dictionary mapping read_id -> list of file positions
     """
     
-    def __init__(self, bam_path: str, force_rebuild_index: bool = False):
+    def __init__(
+        self,
+        bam_path: str,
+        force_rebuild_index: bool = False,
+        index_cache_dir: str = None,
+        allow_index_build: bool = True,
+    ):
         """
         Initialize indexed BAM reader.
         
         Args:
             bam_path: Path to BAM file
             force_rebuild_index: If True, rebuild index even if cached index exists
+            index_cache_dir: Directory for temporary fallback index cache
+            allow_index_build: If False, missing or invalid indexes raise an error
         """
+        self.bam_path = bam_path
         self.bam_file = pysam.AlignmentFile(bam_path, "rb", check_sq=False)
-        
-        filename = bam_path.split('/')[-1]
-        os.makedirs('data_cache/bam_index', exist_ok=True)
-        bam_index_file = f'data_cache/bam_index/{filename}.index'
-        
-        if force_rebuild_index or not os.path.exists(bam_index_file):
-            self.bam_index = self._build_bam_index(bam_index_file)
+        self.bam_index_created = False
+
+        preferred_index = default_bam_index_file(bam_path)
+        require_writable = (
+            force_rebuild_index
+            or not os.path.exists(preferred_index)
+            or _index_is_stale(bam_path, preferred_index)
+        )
+        self.bam_index_file, self.bam_index_is_temporary = resolve_bam_index_file(
+            bam_path,
+            cache_dir=index_cache_dir,
+            require_writable=require_writable,
+        )
+
+        if (
+            force_rebuild_index
+            or not os.path.exists(self.bam_index_file)
+            or _index_is_stale(bam_path, self.bam_index_file)
+        ):
+            if not allow_index_build:
+                raise FileNotFoundError(
+                    f"BAM index is missing or stale: {self.bam_index_file}. "
+                    "The main inference process must build it before workers start."
+                )
+            self.bam_index = self._build_bam_index(self.bam_index_file)
+            self.bam_index_created = True
         else:
             try:
-                with open(bam_index_file, 'rb') as fr:
+                with open(self.bam_index_file, 'rb') as fr:
                     self.bam_index = pickle.load(fr)
-            except Exception:
-                self.bam_index = self._build_bam_index(bam_index_file)
+            except Exception as exc:
+                if not allow_index_build:
+                    raise RuntimeError(f"Failed to load BAM index {self.bam_index_file}") from exc
+                self.bam_index_file, self.bam_index_is_temporary = resolve_bam_index_file(
+                    bam_path,
+                    cache_dir=index_cache_dir,
+                    require_writable=True,
+                )
+                self.bam_index = self._build_bam_index(self.bam_index_file)
+                self.bam_index_created = True
     
 
     def _build_bam_index(self, bam_index_file: str) -> dict:
@@ -79,8 +207,19 @@ class BamReader:
                 bam_index[read_id].append(read_ptr)
             read_ptr = self.bam_file.tell()
         
-        with open(bam_index_file, 'wb') as fw:
-            pickle.dump(bam_index, fw)
+        index_dir = os.path.dirname(os.path.abspath(bam_index_file))
+        os.makedirs(index_dir, exist_ok=True)
+        temp_index_file = f"{bam_index_file}.tmp.{os.getpid()}.{id(bam_index)}"
+        try:
+            with open(temp_index_file, 'wb') as fw:
+                pickle.dump(bam_index, fw)
+            os.replace(temp_index_file, bam_index_file)
+        finally:
+            try:
+                if os.path.exists(temp_index_file):
+                    os.remove(temp_index_file)
+            except OSError:
+                pass
         
         local_print(f'Bam index built and saved in {bam_index_file}. Size: {len(bam_index)}')
         return bam_index
@@ -168,4 +307,3 @@ class BamReader:
                 site[name].append(pred_value)
 
         return site
-
