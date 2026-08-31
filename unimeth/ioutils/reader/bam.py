@@ -6,6 +6,7 @@ Provides efficient random access to BAM records and methylation prediction loadi
 import os
 import hashlib
 import pickle
+import time
 from typing import Dict, List
 
 import pysam
@@ -86,6 +87,19 @@ def _index_is_stale(bam_path: str, index_path: str) -> bool:
         return True
 
 
+def bam_index_needs_rebuild(
+    bam_path: str,
+    bam_index_file: str,
+    force_rebuild_index: bool = False,
+) -> bool:
+    """Return True when a UniMeth BAM index is missing, stale, or forced."""
+    return (
+        force_rebuild_index
+        or not os.path.exists(bam_index_file)
+        or _index_is_stale(bam_path, bam_index_file)
+    )
+
+
 def cleanup_bam_index(index_path: str, is_temporary: bool, created_by_this_run: bool) -> None:
     """Remove a temporary fallback index that was created by this run."""
     if not (index_path and is_temporary and created_by_this_run):
@@ -124,6 +138,7 @@ class BamReader:
         force_rebuild_index: bool = False,
         index_cache_dir: str = None,
         allow_index_build: bool = True,
+        threads: int = 1,
     ):
         """
         Initialize indexed BAM reader.
@@ -133,16 +148,18 @@ class BamReader:
             force_rebuild_index: If True, rebuild index even if cached index exists
             index_cache_dir: Directory for temporary fallback index cache
             allow_index_build: If False, missing or invalid indexes raise an error
+            threads: Number of htslib threads for BAM decompression
         """
         self.bam_path = bam_path
-        self.bam_file = pysam.AlignmentFile(bam_path, "rb", check_sq=False)
+        threads = max(1, int(threads or 1))
+        self.bam_file = pysam.AlignmentFile(bam_path, "rb", check_sq=False, threads=threads)
         self.bam_index_created = False
 
         preferred_index = default_bam_index_file(bam_path)
-        require_writable = (
-            force_rebuild_index
-            or not os.path.exists(preferred_index)
-            or _index_is_stale(bam_path, preferred_index)
+        require_writable = bam_index_needs_rebuild(
+            bam_path,
+            preferred_index,
+            force_rebuild_index=force_rebuild_index,
         )
         self.bam_index_file, self.bam_index_is_temporary = resolve_bam_index_file(
             bam_path,
@@ -150,10 +167,10 @@ class BamReader:
             require_writable=require_writable,
         )
 
-        if (
-            force_rebuild_index
-            or not os.path.exists(self.bam_index_file)
-            or _index_is_stale(bam_path, self.bam_index_file)
+        if bam_index_needs_rebuild(
+            bam_path,
+            self.bam_index_file,
+            force_rebuild_index=force_rebuild_index,
         ):
             if not allow_index_build:
                 raise FileNotFoundError(
@@ -180,11 +197,14 @@ class BamReader:
 
     def _build_bam_index(self, bam_index_file: str) -> dict:
         local_print('Building bam index...')
+        start_time = time.perf_counter()
         self.bam_file.reset()
         bam_index = {}
+        records_scanned = 0
         read_ptr = self.bam_file.tell()
         
         for bam_read in self.bam_file:
+            records_scanned += 1
             if bam_read.is_supplementary or bam_read.is_secondary:
                 read_ptr = self.bam_file.tell()
                 continue
@@ -221,7 +241,11 @@ class BamReader:
             except OSError:
                 pass
         
-        local_print(f'Bam index built and saved in {bam_index_file}. Size: {len(bam_index)}')
+        elapsed = time.perf_counter() - start_time
+        local_print(
+            f'Bam index built and saved in {bam_index_file}. '
+            f'Size: {len(bam_index)}. {records_scanned} records scanned in {elapsed:.1f}s'
+        )
         return bam_index
     
     def get_read_by_id(self, read_id: str) -> list:

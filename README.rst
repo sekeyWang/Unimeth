@@ -1,6 +1,11 @@
 Changelog
 =========
 
+v0.2.3
+------
+- Fix BAM index timeout issue
+- Refine dependency constraints
+
 v0.2.2
 ------
 - Add SLOW5/BLOW5 input support for inference

@@ -1,19 +1,19 @@
 [project]
 name = "unimeth"
-version = "0.2.2"
+version = "0.2.3"
 authors = [{ name = "Shaokai Wang", email = "skwang@csu.edu.cn" }]
 license = { text = "BSD-3-Clause-Clear" }
 description = "Unimeth - Unified DNA Methylation Detection from Nanopore Reads"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "torch>=2.3",
-    "numpy>=2.0",
-    "transformers>=4.40",
+    "torch>=2.3,<2.6",
+    "numpy>=2.0,<3",
+    "transformers>=4.40,<5",
     "tqdm>=4.66",
-    "accelerate>=1.0",
+    "accelerate>=1.0,<2",
     "pysam>=0.22",
-    "pod5>=0.3",
+    "pod5>=0.3,<0.3.35",
     "scikit-learn>=1.5",
     "scipy>=1.13",
 ]

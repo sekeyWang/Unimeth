@@ -67,7 +67,7 @@ class AggregationBAMWriter:
     __reads_complete__ markers, rather than using internal buffer limits.
     
     Args:
-        output_path: Path to output BAM file (should include rank info, e.g., "output.part_0.bam")
+        output_path: Path to output BAM file (should include rank info, e.g., "output_rank0.bam")
         template_bam_path: Path to template BAM for header copying
         bam_reader: BamReader instance for fetching original reads
         keep_mv: Whether to retain mv tags in output modBAM
