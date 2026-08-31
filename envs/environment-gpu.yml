@@ -4,9 +4,9 @@ channels:
   - bioconda
 dependencies:
   - python=3.12
-  - unimeth
-  - pytorch-gpu
-  - cuda-version=12.4
+  - unimeth=0.2.3
   - pip
   - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu124
+      - torch==2.5.1+cu124
       - pyslow5>=1.4.0
