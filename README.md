@@ -31,13 +31,24 @@
 
 ### Option 1. Install via Bioconda
 
+Unimeth is available from Bioconda:
+
 ```bash
-conda create -n unimeth -c conda-forge -c bioconda --strict-channel-priority unimeth pytorch-gpu cuda-version=12.4
-conda activate unimeth
-pip install --no-deps "pyslow5>=1.4.0"
+conda create -n unimeth \
+  -c conda-forge -c bioconda \
+  --strict-channel-priority \
+  python=3.12 unimeth
 ```
 
-Unimeth is available from Bioconda. The command above installs Unimeth with a GPU-enabled PyTorch build from conda-forge. Adjust `cuda-version` if your system requires a different CUDA runtime.
+Then install a PyTorch build that matches your CUDA environment. For example:
+
+```bash
+conda activate unimeth
+
+pip install --upgrade --force-reinstall \
+  torch==2.5.1 \
+  --index-url https://download.pytorch.org/whl/cu124
+```
 
 If you have cloned this repository, you can use the provided environment file instead:
 
