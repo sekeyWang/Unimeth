@@ -16,13 +16,13 @@ def normalize_bam_path(bam_path: str | Path) -> Path:
 def bam_part_path(bam_path: str | Path, rank: int) -> Path:
     """Return the rank-specific BAM part path for a final BAM path."""
     path = normalize_bam_path(bam_path)
-    return path.with_name(f"{path.stem}.part_{rank}{path.suffix}")
+    return path.with_name(f"{path.stem}_rank{rank}{path.suffix}")
 
 
 def bam_part_glob(bam_path: str | Path) -> str:
     """Return the glob pattern for rank-specific BAM part paths."""
     path = normalize_bam_path(bam_path)
-    return str(path.with_name(f"{path.stem}.part_*{path.suffix}"))
+    return str(path.with_name(f"{path.stem}_rank*{path.suffix}"))
 
 
 def merged_unsorted_path(bam_path: str | Path) -> Path:

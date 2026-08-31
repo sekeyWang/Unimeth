@@ -21,7 +21,13 @@ from unimeth.config import tokenizer, get_total_stride
 from unimeth.model.datasets import collate_fn
 from unimeth.model.loader import load_model
 from unimeth.utils import local_print
-from unimeth.ioutils.reader.bam import BamReader, cleanup_bam_index
+from unimeth.ioutils.reader.bam import (
+    BamReader,
+    bam_index_needs_rebuild,
+    cleanup_bam_index,
+    default_bam_index_file,
+    resolve_bam_index_file,
+)
 from unimeth.ioutils.writer.bam_finalize import (
     bam_has_references,
     bam_part_glob,
@@ -100,16 +106,31 @@ class InferenceEngine:
             return os.getcwd()
         return os.path.dirname(os.path.abspath(output_path)) or os.getcwd()
 
+    def _wait_for_bam_index(self, bam_path: str, index_file: str):
+        """Wait for the main process to finish writing the BAM index."""
+        while bam_index_needs_rebuild(bam_path, index_file):
+            time.sleep(1.0)
+
     def _prepare_bam_index(self, output_format: str):
-        """Build or load the BAM read-id index before DataLoader workers start."""
+        """Build or wait for the BAM read-id index before DataLoader workers start."""
         cache_dir = self._get_bam_index_cache_dir(output_format)
         self.args.bam_index_cache_dir = cache_dir
 
+        preferred_index = default_bam_index_file(self.args.bam_dir)
+        require_writable = bam_index_needs_rebuild(self.args.bam_dir, preferred_index)
+        index_file, _ = resolve_bam_index_file(
+            self.args.bam_dir,
+            cache_dir=cache_dir,
+            require_writable=require_writable,
+        )
+
         if self.accelerator.is_main_process:
+            index_threads = min(max(1, int(getattr(self.args, 'num_workers', 1) or 1)), 4)
             bam_reader = BamReader(
                 self.args.bam_dir,
                 force_rebuild_index=False,
                 index_cache_dir=cache_dir,
+                threads=index_threads,
             )
             self._bam_index_file = bam_reader.bam_index_file
             self._bam_index_is_temporary = bam_reader.bam_index_is_temporary
@@ -118,8 +139,8 @@ class InferenceEngine:
                 bam_reader.bam_file.close()
             except Exception:
                 pass
-
-        self.accelerator.wait_for_everyone()
+        else:
+            self._wait_for_bam_index(self.args.bam_dir, index_file)
 
     def _cleanup_bam_index(self):
         """Remove the temporary fallback BAM index created by this inference run."""
@@ -351,7 +372,7 @@ class InferenceEngine:
                 bam_path = normalize_bam_path(self.args.bam_out_dir or self.args.out_dir)
                 part_files = sorted(glob.glob(bam_part_glob(bam_path)))
                 if part_files:
-                    local_print(f"Merging {len(part_files)} part BAM(s)...")
+                    local_print(f"Merging {len(part_files)} rank BAM(s)...")
                     try:
                         sort_and_index = bam_has_references(self.args.bam_dir)
                         finalize_part_bams(str(bam_path), part_files, sort_and_index=sort_and_index)
