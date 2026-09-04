@@ -112,6 +112,11 @@ class ResumeCheckpoint:
                         completed.add(read_id)
         return completed
 
+    def refresh_completed_read_ids(self) -> set[str]:
+        """Reload completed reads written by all ranks."""
+        self.completed_read_ids.update(self._load_completed_read_ids())
+        return self.completed_read_ids
+
     def record_read(self, read_id: str) -> bool:
         """Record one newly completed read ID."""
         if read_id in self.completed_read_ids:

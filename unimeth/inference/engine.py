@@ -448,6 +448,8 @@ class InferenceEngine:
                     local_print("Skipping TSV merge because BAM finalization failed; resume files were kept")
             else:
                 try:
+                    if resume_checkpoint is not None and is_main:
+                        tsv_writer.completed_read_ids = resume_checkpoint.refresh_completed_read_ids()
                     tsv_writer.merge_outputs(is_main_process=is_main)
                 except Exception:
                     finalize_ok = False
