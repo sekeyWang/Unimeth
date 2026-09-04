@@ -96,6 +96,7 @@ class AggregationBAMWriter:
         self.stats = {
             'reads_completed': 0,
             'reads_flushed_incomplete': 0,
+            'reads_discarded_on_error': 0,
             'patches_received': 0,
             'patches_dropped': 0,
         }
@@ -316,12 +317,35 @@ class AggregationBAMWriter:
         # Log statistics
         logger.info(
             f"BAM writer stats: completed={self.stats['reads_completed']}, "
-            f"incomplete={self.stats['reads_flushed_incomplete']}"
+            f"incomplete={self.stats['reads_flushed_incomplete']}, "
+            f"discarded_on_error={self.stats['reads_discarded_on_error']}"
         )
+
+    def _close_after_error(self, exc_type):
+        """Close output BAM without writing buffered partial reads after an error."""
+        buffered_reads = len(self.buffer)
+        incomplete_reads = sum(1 for buf in self.buffer.values() if not buf.is_complete)
+        exc_name = getattr(exc_type, "__name__", str(exc_type))
+
+        if buffered_reads:
+            logger.warning(
+                "Closing BAM writer after %s; discarding %d buffered reads "
+                "(%d incomplete) to avoid partial MM/ML tags",
+                exc_name,
+                buffered_reads,
+                incomplete_reads,
+            )
+            self.stats['reads_discarded_on_error'] += buffered_reads
+
+        self.buffer.clear()
+        self.output_bam.close()
     
     def __enter__(self):
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+        if exc_type is None:
+            self.close()
+        else:
+            self._close_after_error(exc_type)
         return False

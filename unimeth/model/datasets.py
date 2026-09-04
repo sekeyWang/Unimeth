@@ -16,11 +16,23 @@ class MultiFileDataset(IterableDataset):
             for data in binned_data:
                 yield data
 
-def get_read_ids(signal_file):
-    read_ids = []
-    for x in signal_file.read_ids:
-        read_ids.append(x)
-    return read_ids
+def iter_sharded_read_ids(
+    read_ids,
+    rank,
+    num_ranks,
+    worker_id,
+    num_workers,
+    completed_read_ids=None,
+):
+    for i, read_id in enumerate(read_ids):
+        if i % num_ranks != rank:
+            continue
+        rank_i = (i - rank) // num_ranks
+        if rank_i % num_workers != worker_id:
+            continue
+        if completed_read_ids and read_id in completed_read_ids:
+            continue
+        yield read_id
 
 
 class Pod5BamDataset(IterableDataset):
@@ -55,11 +67,9 @@ class Pod5BamDataset(IterableDataset):
         except Exception:
             rank, num_ranks = 0, 1
 
-        # SignalReader further shards reads by worker (i % num_workers == pid).
-        # reads_per_flush must exceed the per-worker read count, otherwise mid-stream
-        # _flush_all events create mixed-length transition batches → uncertain predictions.
         from torch.utils.data import get_worker_info as _get_worker_info
         worker_info = _get_worker_info()
+        worker_id = worker_info.id if worker_info is not None else 0
         num_workers = worker_info.num_workers if worker_info is not None else 1
 
         bam_file = BamReader(
@@ -69,29 +79,36 @@ class Pod5BamDataset(IterableDataset):
             allow_index_build=False,
         )
 
-        # Two-pass: collect all rank-level read_ids first so we can compute the
-        # per-worker count and set reads_per_flush accordingly.
-        signal_entries = []
-        total_rank_reads = 0
+        if getattr(self.args, 'mode', None) == 'inference':
+            # Avoid a full startup pass over all signal files just to size reads_per_flush.
+            # The BAM writer flushes complete reads immediately; the final marker handles
+            # any reads completed by the final bin flush.
+            self.binning.reads_per_flush = None
+        completed_read_ids = getattr(self.args, 'resume_completed_read_ids', None)
+
         for signal_path in self.signal_paths:
             signal_file = open_signal_file(signal_path, recursive=True, index=True)
-            rids = get_read_ids(signal_file) if self.read_ids is None else self.read_ids
-            rids = rids[rank::num_ranks]
-            signal_entries.append((signal_path, signal_file, rids))
-            total_rank_reads += len(rids)
+            try:
+                read_ids = signal_file.read_ids if self.read_ids is None else self.read_ids
+                read_ids = iter_sharded_read_ids(
+                    read_ids,
+                    rank,
+                    num_ranks,
+                    worker_id,
+                    num_workers,
+                    completed_read_ids=completed_read_ids,
+                )
 
-        # Raise reads_per_flush above per-worker count to eliminate mid-stream flushes.
-        per_worker_reads = (total_rank_reads + num_workers - 1) // num_workers
-        if per_worker_reads >= self.binning.reads_per_flush:
-            self.binning.reads_per_flush = per_worker_reads + 1
-
-        for signal_path, signal_file, read_ids in signal_entries:
-            subset_name = os.path.basename(signal_path)
-            reader = Reader_raw(signal_file, bam_file=bam_file, args=self.args)
-            for feature in reader.get_features(subset_name, read_ids):
-                for dataset in get_datasets(feature, self.args):
-                    for binned_data in self.binning.get_data(dataset):
-                        yield binned_data
+                subset_name = os.path.basename(signal_path)
+                reader = Reader_raw(signal_file, bam_file=bam_file, args=self.args)
+                for feature in reader.get_features(subset_name, read_ids, shard_by_worker=False):
+                    for dataset in get_datasets(feature, self.args):
+                        for binned_data in self.binning.get_data(dataset):
+                            yield binned_data
+            finally:
+                close = getattr(signal_file, 'close', None)
+                if close is not None:
+                    close()
         yield from self.binning.flush()
         yield {'__reads_complete__': True}
 
@@ -212,7 +229,7 @@ class Binning:
             yield dataset
             # Track unique reads
             read_id = dataset.get('read_id')
-            if read_id not in self.seen_read_ids:
+            if self.reads_per_flush is not None and read_id not in self.seen_read_ids:
                 self.seen_read_ids.add(read_id)
                 self.read_count += 1
                 if self.read_count >= self.reads_per_flush:
@@ -224,7 +241,7 @@ class Binning:
         self.bins[bin_id].append(dataset)
         # Track unique reads for read-level flush
         read_id = dataset.get('read_id')
-        if read_id not in self.seen_read_ids:
+        if self.reads_per_flush is not None and read_id not in self.seen_read_ids:
             self.seen_read_ids.add(read_id)
             self.read_count += 1
             if self.read_count >= self.reads_per_flush:

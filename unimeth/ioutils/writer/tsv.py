@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 import torch
 
 from unimeth.config import VOCAB as vocab
+from unimeth.inference.resume import is_completed_tsv_line
 from unimeth.utils.common import make_output_path, merge_rank_files
 
 
@@ -24,7 +25,10 @@ class TSVWriter:
     """
     
     def __init__(self, output_path: str, num_processes: int, process_index: int,
-                 max_queue_size: int = 100, gzip_output: bool = False):
+                 max_queue_size: int = 100, gzip_output: bool = False,
+                 part_suffix: str | None = None,
+                 completed_read_ids: set[str] | None = None,
+                 sync_writes: bool = False):
         """
         Initialize async TSV writer.
         
@@ -34,6 +38,9 @@ class TSVWriter:
             process_index: Current process index
             max_queue_size: Maximum write queue size (default: 100)
             gzip_output: Whether to gzip-compress the final TSV output
+            part_suffix: Optional suffix for resume part files
+            completed_read_ids: If set, merge only rows from completed reads
+            sync_writes: Write batches synchronously instead of using a thread
         """
         output_path = make_output_path(output_path)
         self.gzip_output = gzip_output or output_path.suffix == '.gz'
@@ -41,6 +48,10 @@ class TSVWriter:
         self.rank_output_base = self._plain_tsv_path(self.output_path) if self.gzip_output else self.output_path
         self.num_processes = num_processes
         self.process_index = process_index
+        self.part_suffix = part_suffix
+        self.completed_read_ids = completed_read_ids
+        self.sync_writes = sync_writes
+        self._file = None
         
         # Each rank gets its own output file
         self.rank_output = self.rank_output_for(process_index)
@@ -65,10 +76,29 @@ class TSVWriter:
             return output_path.with_suffix('')
         return output_path
 
-    def rank_output_for(self, rank: int) -> Path:
+    def rank_output_for(self, rank: int, part_suffix: str | None = None) -> Path:
         """Return rank-specific temporary output path."""
+        selected_suffix = self.part_suffix if part_suffix is None else part_suffix
+        suffix = f"_{selected_suffix}" if selected_suffix else ""
         return self.rank_output_base.parent / \
-            f"{self.rank_output_base.stem}_rank{rank}{self.rank_output_base.suffix}"
+            f"{self.rank_output_base.stem}_rank{rank}{suffix}{self.rank_output_base.suffix}"
+
+    def rank_outputs_for_merge(self, rank: int) -> List[Path]:
+        """Return all temporary output files for a rank in merge order."""
+        if not self.part_suffix and self.completed_read_ids is None:
+            rank_output = self.rank_output_for(rank)
+            return [rank_output] if rank_output.exists() else []
+
+        outputs = []
+        base_output = self.rank_output_for(rank, part_suffix="")
+        if base_output.exists():
+            outputs.append(base_output)
+
+        pattern = f"{self.rank_output_base.stem}_rank{rank}_*{self.rank_output_base.suffix}"
+        for path in sorted(self.rank_output_base.parent.glob(pattern)):
+            if path not in outputs:
+                outputs.append(path)
+        return outputs
 
     def _writer_loop(self):
         """Background thread: consume queue, format and write to file."""
@@ -94,11 +124,21 @@ class TSVWriter:
     
     def open(self):
         """Start the background writer thread."""
+        if self.sync_writes:
+            self._file = open(self.rank_output, 'w')
+            return
+
         self.writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
         self.writer_thread.start()
         
     def close(self):
         """Stop the background thread and wait for completion."""
+        if self.sync_writes:
+            if self._file is not None:
+                self._file.close()
+                self._file = None
+            return
+
         # Signal thread to stop
         self._stop_event.set()
         # Wait for queue to empty
@@ -124,6 +164,10 @@ class TSVWriter:
             self._merge_outputs_gzip(remove_temp=True)
             return
 
+        if self.part_suffix or self.completed_read_ids is not None:
+            self._merge_outputs_plain(remove_temp=True)
+            return
+
         merge_rank_files(
             output_path=self.output_path,
             num_processes=self.num_processes,
@@ -131,12 +175,36 @@ class TSVWriter:
             verbose=True
         )
 
+    def _copy_rank_output_text(self, infile_path: Path, outfile, remove_temp: bool) -> None:
+        """Copy one rank TSV file, optionally filtering to completed reads."""
+        if self.completed_read_ids is None:
+            with open(infile_path, 'r', encoding='utf-8') as infile:
+                shutil.copyfileobj(infile, outfile)
+        else:
+            with open(infile_path, 'r', encoding='utf-8') as infile:
+                for line in infile:
+                    if is_completed_tsv_line(line, self.completed_read_ids):
+                        outfile.write(line)
+
+        if remove_temp:
+            infile_path.unlink()
+
+    def _merge_outputs_plain(self, remove_temp: bool = True) -> None:
+        """Merge rank-specific TSV files into a single plain-text output."""
+        with open(self.output_path, 'w', encoding='utf-8') as outfile:
+            for rank in range(self.num_processes):
+                for rank_file in self.rank_outputs_for_merge(rank):
+                    self._copy_rank_output_text(rank_file, outfile, remove_temp)
+
     def _merge_outputs_gzip(self, remove_temp: bool = True) -> None:
         """Merge rank-specific TSV files into a single gzip-compressed output."""
-        with gzip.open(self.output_path, 'wb') as outfile:
+        mode = 'wt' if self.completed_read_ids is not None else 'wb'
+        with gzip.open(self.output_path, mode) as outfile:
             for rank in range(self.num_processes):
-                rank_file = self.rank_output_for(rank)
-                if rank_file.exists():
+                for rank_file in self.rank_outputs_for_merge(rank):
+                    if self.completed_read_ids is not None:
+                        self._copy_rank_output_text(rank_file, outfile, remove_temp)
+                        continue
                     with open(rank_file, 'rb') as infile:
                         shutil.copyfileobj(infile, outfile)
                     if remove_temp:
@@ -188,6 +256,13 @@ class TSVWriter:
             'labels': kwargs['labels'],
             'patch_pos': kwargs['patch_pos'],
         }
+
+        if self.sync_writes:
+            batch_str = self._format_batch(**cpu_batch)
+            self._file.write(batch_str)
+            self._file.flush()
+            self._total_written += batch_str.count('\n')
+            return sum(len(p) for p in cpu_batch['patch_pos'])
         
         # Queue for background processing and writing
         try:
