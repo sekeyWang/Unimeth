@@ -4,6 +4,7 @@ Signal reader for extracting features from raw signal and BAM files.
 Provides multi-worker capable readers for processing nanopore data.
 """
 import os
+from collections.abc import Iterable
 from torch.utils.data import get_worker_info
 from tqdm import tqdm
 
@@ -42,7 +43,7 @@ class SignalReader:
         self.bam_file = bam_file
         self.extractor = SignalFeatureExtractor(args)
     
-    def get_features(self, subset_name: str, read_ids: list):
+    def get_features(self, subset_name: str, read_ids: Iterable, shard_by_worker: bool = True):
         """
         Generator that yields features for a subset of read IDs.
         
@@ -52,6 +53,7 @@ class SignalReader:
         Args:
             subset_name: Name of this subset (for progress bar)
             read_ids: List of read IDs to process
+            shard_by_worker: If True, split read_ids across DataLoader workers.
             
         Yields:
             Feature dictionaries from SignalFeatureExtractor.get_feature()
@@ -79,7 +81,7 @@ class SignalReader:
         ))
         
         for i, read_id in iterator:
-            if i % num_workers != pid:
+            if shard_by_worker and i % num_workers != pid:
                 continue
             
             # Get raw signal and BAM data
