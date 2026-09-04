@@ -1,6 +1,11 @@
 Changelog
 =========
 
+v0.2.4
+------
+- Add ``--resume`` for BAM/modBAM inference
+- Reduce long startup wait before inference
+
 v0.2.3
 ------
 - Fix BAM index timeout issue

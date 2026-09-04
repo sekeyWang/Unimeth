@@ -149,6 +149,7 @@ unimeth infer \
 
 The examples set `--batch_size 256` for conservative demo memory usage; if omitted, the current code default is `512`. Use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam` to generate TSV and modBAM simultaneously.
 Use `--slow5 reads.slow5` or `--slow5 reads.blow5` instead of `--pod5` for SLOW5/BLOW5 input.
+Use `--resume` for long-running BAM/modBAM inference. It keeps completed-read checkpoints after Ctrl+C or `kill PID`; TSV resume is not recommended because partial records may be duplicated.
 
 #### Output
 
