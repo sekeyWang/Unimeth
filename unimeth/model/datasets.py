@@ -16,12 +16,21 @@ class MultiFileDataset(IterableDataset):
             for data in binned_data:
                 yield data
 
-def iter_sharded_read_ids(read_ids, rank, num_ranks, worker_id, num_workers):
+def iter_sharded_read_ids(
+    read_ids,
+    rank,
+    num_ranks,
+    worker_id,
+    num_workers,
+    completed_read_ids=None,
+):
     for i, read_id in enumerate(read_ids):
         if i % num_ranks != rank:
             continue
         rank_i = (i - rank) // num_ranks
         if rank_i % num_workers != worker_id:
+            continue
+        if completed_read_ids and read_id in completed_read_ids:
             continue
         yield read_id
 
@@ -75,12 +84,20 @@ class Pod5BamDataset(IterableDataset):
             # The BAM writer flushes complete reads immediately; the final marker handles
             # any reads completed by the final bin flush.
             self.binning.reads_per_flush = None
+        completed_read_ids = getattr(self.args, 'resume_completed_read_ids', None)
 
         for signal_path in self.signal_paths:
             signal_file = open_signal_file(signal_path, recursive=True, index=True)
             try:
                 read_ids = signal_file.read_ids if self.read_ids is None else self.read_ids
-                read_ids = iter_sharded_read_ids(read_ids, rank, num_ranks, worker_id, num_workers)
+                read_ids = iter_sharded_read_ids(
+                    read_ids,
+                    rank,
+                    num_ranks,
+                    worker_id,
+                    num_workers,
+                    completed_read_ids=completed_read_ids,
+                )
 
                 subset_name = os.path.basename(signal_path)
                 reader = Reader_raw(signal_file, bam_file=bam_file, args=self.args)

@@ -13,10 +13,11 @@ def normalize_bam_path(bam_path: str | Path) -> Path:
     return Path(f"{path}.bam")
 
 
-def bam_part_path(bam_path: str | Path, rank: int) -> Path:
+def bam_part_path(bam_path: str | Path, rank: int, part_suffix: str | None = None) -> Path:
     """Return the rank-specific BAM part path for a final BAM path."""
     path = normalize_bam_path(bam_path)
-    return path.with_name(f"{path.stem}_rank{rank}{path.suffix}")
+    suffix = f"_{part_suffix}" if part_suffix else ""
+    return path.with_name(f"{path.stem}_rank{rank}{suffix}{path.suffix}")
 
 
 def bam_part_glob(bam_path: str | Path) -> str:

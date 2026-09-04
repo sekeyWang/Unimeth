@@ -35,6 +35,12 @@ from unimeth.ioutils.writer.bam_finalize import (
     finalize_part_bams,
     normalize_bam_path,
 )
+from unimeth.inference.resume import (
+    GracefulStopRequested,
+    GracefulStopper,
+    ReadCompletionTracker,
+    ResumeCheckpoint,
+)
 
 
 class InferenceEngine:
@@ -105,6 +111,19 @@ class InferenceEngine:
         if output_path is None:
             return os.getcwd()
         return os.path.dirname(os.path.abspath(output_path)) or os.getcwd()
+
+    def _get_resume_output_path(self, output_format: str):
+        """Use the selected final output path as the resume sidecar base."""
+        if output_format in ('bam', 'both'):
+            output_path = getattr(self.args, 'bam_out_dir', None) or getattr(self.args, 'out_dir', None)
+            if output_path:
+                return normalize_bam_path(output_path)
+
+        output_path = getattr(self.args, 'tsv_out_dir', None) or getattr(self.args, 'out_dir', None)
+        if output_path:
+            return output_path
+
+        raise ValueError("--resume requires an output path")
 
     def _wait_for_bam_index(self, bam_path: str, index_file: str):
         """Wait for the main process to finish writing the BAM index."""
@@ -199,12 +218,25 @@ class InferenceEngine:
         if not getattr(self.args, 'show_reading_progress', False):
             os.environ['UNIMETH_DISABLE_READING_PROGRESS'] = '1'
 
+        is_main = self.accelerator.is_main_process
+        rank = self.accelerator.process_index
+        resume_checkpoint = resume_tracker = None
+        resume_part_suffix = None
+
+        if getattr(self.args, 'resume', False):
+            resume_checkpoint = ResumeCheckpoint(self._get_resume_output_path(output_format), rank)
+            resume_tracker = ReadCompletionTracker(resume_checkpoint)
+            resume_part_suffix = resume_checkpoint.part_suffix
+            self.args.resume_completed_read_ids = resume_checkpoint.completed_read_ids
+            if is_main:
+                skipped = len(resume_checkpoint.completed_read_ids)
+                local_print(f"Resume enabled: skipping {skipped:,} completed read(s)")
+        else:
+            self.args.resume_completed_read_ids = None
+
         self._prepare_bam_index(output_format)
         self.setup_dataloader()
         self.load_model()
-
-        is_main = self.accelerator.is_main_process
-        rank = self.accelerator.process_index
 
         # Initialize writer(s) based on format
         tsv_writer = bam_writer = None
@@ -218,12 +250,17 @@ class InferenceEngine:
                 process_index=rank,
                 max_queue_size=50,
                 gzip_output=getattr(self.args, 'gzip', False),
+                part_suffix=resume_part_suffix,
+                completed_read_ids=(
+                    resume_checkpoint.completed_read_ids if resume_checkpoint is not None else None
+                ),
+                sync_writes=resume_checkpoint is not None,
             )
 
         if output_format in ('bam', 'both'):
             from unimeth.ioutils.writer.bam_aggregation import AggregationBAMWriter
             bam_path = normalize_bam_path(self.args.bam_out_dir if self.args.bam_out_dir else self.args.out_dir)
-            rank_bam_path = bam_part_path(bam_path, rank)
+            rank_bam_path = bam_part_path(bam_path, rank, part_suffix=resume_part_suffix)
             bam_reader = BamReader(
                 self.args.bam_dir,
                 force_rebuild_index=False,
@@ -251,90 +288,116 @@ class InferenceEngine:
         import contextlib
         writers = [w for w in (tsv_writer, bam_writer) if w is not None]
 
-        with contextlib.ExitStack() as stack:
-            for w in writers:
-                stack.enter_context(w)
+        graceful_stop_requested = False
+        with GracefulStopper(enabled=resume_checkpoint is not None) as graceful_stopper:
+            try:
+                with contextlib.ExitStack() as stack:
+                    if resume_checkpoint is not None:
+                        stack.callback(resume_checkpoint.close)
+                    for w in writers:
+                        stack.enter_context(w)
 
-            with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                for batch_idx, batch in enumerate(self.dataloader):
-                    if self.args.limit is not None and batch_idx >= self.args.limit:
-                        break
+                    try:
+                        with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                            batch_iter = enumerate(self.dataloader)
+                            while True:
+                                graceful_stopper.raise_if_requested()
+                                try:
+                                    batch_idx, batch = next(batch_iter)
+                                except StopIteration:
+                                    break
 
-                    total_batches += 1
+                                if self.args.limit is not None and batch_idx >= self.args.limit:
+                                    break
 
-                    has_reads_complete_marker = (
-                        isinstance(batch, dict)
-                        and batch.get('__reads_complete__', False)
-                    )
-                    has_batch_data = isinstance(batch, dict) and 'signals' in batch
+                                total_batches += 1
 
-                    # Handle pure reads_complete marker before model inference.
-                    # If the marker is co-batched with data, process the data first.
-                    if has_reads_complete_marker and not has_batch_data:
-                        if bam_writer is not None:
-                            bam_writer.on_reads_complete()
-                        continue
+                                has_reads_complete_marker = (
+                                    isinstance(batch, dict)
+                                    and batch.get('__reads_complete__', False)
+                                )
+                                has_batch_data = isinstance(batch, dict) and 'signals' in batch
 
-                    # Model forward — manually move tensors to device (dataloader not prepared)
-                    times['other'].append(time.perf_counter() - t3)
-                    t0 = time.perf_counter()
-                    logits = self.model(
-                        signals=batch['signals'].to(self.accelerator.device),
-                        encoder_mask=batch['encoder_mask'].to(self.accelerator.device),
-                        decoder_input_ids=batch['decoder_input_ids'].to(self.accelerator.device),
-                        signal_pos=batch['signal_pos'].to(self.accelerator.device),
-                    )
-                    torch.cuda.synchronize()
-                    times['model'].append(time.perf_counter() - t0)
+                                # Handle pure reads_complete marker before model inference.
+                                # If the marker is co-batched with data, process the data first.
+                                if has_reads_complete_marker and not has_batch_data:
+                                    if bam_writer is not None:
+                                        bam_writer.on_reads_complete()
+                                    graceful_stopper.raise_if_requested()
+                                    continue
 
-                    # Extract predictions
-                    t1 = time.perf_counter()
-                    preds, methy = self._extract_predictions(
-                        batch['decoder_input_ids'],
-                        logits,
-                        batch['patch_pos']
-                    )
-                    torch.cuda.synchronize()
-                    times['extract'].append(time.perf_counter() - t1)
-                    
-                    # Write (same preds/methy to all active writers)
-                    t2 = time.perf_counter()
-                    samples_written = 0
-                    if tsv_writer is not None:
-                        samples_written = tsv_writer.write_batch(
-                            preds=preds, methy=methy,
-                            read_ids=batch['read_id'], chrs=batch['chr'],
-                            strands=batch['strand'], ref_pos=batch['ref_pos'],
-                            read_pos=batch['read_pos'], labels=batch['labels'],
-                            patch_pos=batch['patch_pos']
-                        )
-                    if bam_writer is not None:
-                        n = bam_writer.write_batch(
-                            preds=preds, methy=methy,
-                            read_ids=batch['read_id'], chrs=batch['chr'],
-                            strands=batch['strand'], ref_pos=batch['ref_pos'],
-                            read_pos=batch['read_pos'], patch_pos=batch['patch_pos'],
-                            patch_idx=batch['patch_idx'], total_patches=batch['total_patches'],
-                        )
-                        if tsv_writer is None:
-                            samples_written = n
-                    times['write'].append(time.perf_counter() - t2)
-                    total_samples += samples_written
+                                # Model forward — manually move tensors to device (dataloader not prepared)
+                                times['other'].append(time.perf_counter() - t3)
+                                t0 = time.perf_counter()
+                                logits = self.model(
+                                    signals=batch['signals'].to(self.accelerator.device),
+                                    encoder_mask=batch['encoder_mask'].to(self.accelerator.device),
+                                    decoder_input_ids=batch['decoder_input_ids'].to(self.accelerator.device),
+                                    signal_pos=batch['signal_pos'].to(self.accelerator.device),
+                                )
+                                torch.cuda.synchronize()
+                                times['model'].append(time.perf_counter() - t0)
 
-                    # Flush BAM buffer when marker was co-batched with data
-                    if has_reads_complete_marker and bam_writer is not None:
-                        bam_writer.on_reads_complete()
+                                # Extract predictions
+                                t1 = time.perf_counter()
+                                preds, methy = self._extract_predictions(
+                                    batch['decoder_input_ids'],
+                                    logits,
+                                    batch['patch_pos']
+                                )
+                                torch.cuda.synchronize()
+                                times['extract'].append(time.perf_counter() - t1)
 
-                    if batch_idx == 0:
-                        Preload = t0 - inference_start
-                        Warmup = time.perf_counter() - t0
+                                # Write (same preds/methy to all active writers)
+                                t2 = time.perf_counter()
+                                samples_written = 0
+                                if tsv_writer is not None:
+                                    samples_written = tsv_writer.write_batch(
+                                        preds=preds, methy=methy,
+                                        read_ids=batch['read_id'], chrs=batch['chr'],
+                                        strands=batch['strand'], ref_pos=batch['ref_pos'],
+                                        read_pos=batch['read_pos'], labels=batch['labels'],
+                                        patch_pos=batch['patch_pos']
+                                    )
+                                if bam_writer is not None:
+                                    n = bam_writer.write_batch(
+                                        preds=preds, methy=methy,
+                                        read_ids=batch['read_id'], chrs=batch['chr'],
+                                        strands=batch['strand'], ref_pos=batch['ref_pos'],
+                                        read_pos=batch['read_pos'], patch_pos=batch['patch_pos'],
+                                        patch_idx=batch['patch_idx'], total_patches=batch['total_patches'],
+                                    )
+                                    if tsv_writer is None:
+                                        samples_written = n
+                                times['write'].append(time.perf_counter() - t2)
+                                total_samples += samples_written
 
-                    pbar.update(1)
-                    elapsed = time.perf_counter() - inference_start
-                    pbar.set_postfix_str(f'{total_samples:,} samples, {total_samples/elapsed:,.0f}/s')
-                    t3 = time.perf_counter()
+                                # Flush BAM buffer when marker was co-batched with data
+                                if has_reads_complete_marker and bam_writer is not None:
+                                    bam_writer.on_reads_complete()
 
-                pbar.close()
+                                if resume_tracker is not None:
+                                    resume_tracker.update_batch(batch)
+
+                                graceful_stopper.raise_if_requested()
+
+                                if batch_idx == 0:
+                                    Preload = t0 - inference_start
+                                    Warmup = time.perf_counter() - t0
+
+                                pbar.update(1)
+                                elapsed = time.perf_counter() - inference_start
+                                pbar.set_postfix_str(f'{total_samples:,} samples, {total_samples/elapsed:,.0f}/s')
+                                t3 = time.perf_counter()
+                    finally:
+                        pbar.close()
+            except GracefulStopRequested as stop:
+                graceful_stop_requested = True
+                if is_main:
+                    local_print(f"\n{stop}; keeping resume files for the next run")
+
+        if graceful_stop_requested:
+            return
 
         # Finalize
         self.accelerator.wait_for_everyone()
@@ -362,9 +425,7 @@ class InferenceEngine:
                 local_print(f"{'='*60}")
 
         # Format-specific finalization
-        if tsv_writer is not None:
-            tsv_writer.merge_outputs(is_main_process=is_main)
-
+        finalize_ok = True
         if bam_writer is not None:
             if is_main:
                 import glob
@@ -378,7 +439,22 @@ class InferenceEngine:
                         finalize_part_bams(str(bam_path), part_files, sort_and_index=sort_and_index)
                         local_print(f"Final BAM: {bam_path}")
                     except Exception as e:
+                        finalize_ok = False
                         local_print(f"Warning: Failed to finalize BAM files: {e}")
+
+        if tsv_writer is not None:
+            if resume_checkpoint is not None and not finalize_ok:
+                if is_main:
+                    local_print("Skipping TSV merge because BAM finalization failed; resume files were kept")
+            else:
+                try:
+                    tsv_writer.merge_outputs(is_main_process=is_main)
+                except Exception:
+                    finalize_ok = False
+                    raise
+
+        if resume_checkpoint is not None and is_main and finalize_ok:
+            resume_checkpoint.cleanup()
 
         self.accelerator.wait_for_everyone()
     
