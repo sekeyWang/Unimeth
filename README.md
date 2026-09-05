@@ -77,7 +77,7 @@ cd Unimeth
 conda create -n unimeth python=3.12
 conda activate unimeth
 
-pip install -e .
+pip install .
 ```
 
 Use `unimeth --help` to list utility subcommands, `unimeth --version` to print the installed version.

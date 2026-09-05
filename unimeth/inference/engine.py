@@ -80,7 +80,7 @@ class InferenceEngine:
             args=self.args
         )
         
-        num_workers = getattr(self.args, 'num_workers', 8)
+        num_workers = getattr(self.args, 'num_workers', 2)
         import functools
         total_stride = get_total_stride(getattr(self.args, 'model_type', 'default'))
         collate_fn_with_stride = functools.partial(collate_fn, 'inference', total_stride=total_stride)
