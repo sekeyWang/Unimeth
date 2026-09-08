@@ -34,6 +34,10 @@ from unimeth.ioutils.writer.bam_finalize import (
     bam_part_path,
     finalize_part_bams,
     normalize_bam_path,
+    select_latest_bam_records,
+)
+from unimeth.inference.coordination import (
+    CompletionCoordinator,
 )
 from unimeth.inference.resume import (
     GracefulStopRequested,
@@ -80,7 +84,7 @@ class InferenceEngine:
             args=self.args
         )
         
-        num_workers = getattr(self.args, 'num_workers', 8)
+        num_workers = getattr(self.args, 'num_workers', 2)
         import functools
         total_stride = get_total_stride(getattr(self.args, 'model_type', 'default'))
         collate_fn_with_stride = functools.partial(collate_fn, 'inference', total_stride=total_stride)
@@ -220,12 +224,20 @@ class InferenceEngine:
 
         is_main = self.accelerator.is_main_process
         rank = self.accelerator.process_index
+        completion_coordinator = CompletionCoordinator.start(
+            output_path=self._get_resume_output_path(output_format),
+            rank=rank,
+            num_processes=self.accelerator.num_processes,
+            is_main_process=is_main,
+            startup_barrier=self.accelerator.wait_for_everyone,
+        )
         resume_checkpoint = resume_tracker = None
         resume_part_suffix = None
 
         if getattr(self.args, 'resume', False):
             resume_checkpoint = ResumeCheckpoint(self._get_resume_output_path(output_format), rank)
-            resume_tracker = ReadCompletionTracker(resume_checkpoint)
+            if output_format == 'tsv':
+                resume_tracker = ReadCompletionTracker(resume_checkpoint)
             resume_part_suffix = resume_checkpoint.part_suffix
             self.args.resume_completed_read_ids = resume_checkpoint.completed_read_ids
             if is_main:
@@ -273,6 +285,13 @@ class InferenceEngine:
                 bam_reader=bam_reader,
                 keep_mv=getattr(self.args, 'keep_mv', False),
             )
+
+        def record_completed_bam_reads():
+            """Persist only read IDs confirmed complete by the BAM writer."""
+            if resume_checkpoint is None or bam_writer is None:
+                return
+            for completed_read_id in bam_writer.pop_completed_read_ids():
+                resume_checkpoint.record_read(completed_read_id)
 
         pbar_desc = {'tsv': 'Inference', 'bam': 'Inference (BAM)', 'both': 'Inference (TSV+BAM)'}.get(output_format, 'Inference')
 
@@ -323,6 +342,7 @@ class InferenceEngine:
                                 if has_reads_complete_marker and not has_batch_data:
                                     if bam_writer is not None:
                                         bam_writer.on_reads_complete()
+                                    record_completed_bam_reads()
                                     graceful_stopper.raise_if_requested()
                                     continue
 
@@ -376,6 +396,7 @@ class InferenceEngine:
                                 if has_reads_complete_marker and bam_writer is not None:
                                     bam_writer.on_reads_complete()
 
+                                record_completed_bam_reads()
                                 if resume_tracker is not None:
                                     resume_tracker.update_batch(batch)
 
@@ -391,6 +412,9 @@ class InferenceEngine:
                                 t3 = time.perf_counter()
                     finally:
                         pbar.close()
+                        if bam_writer is not None:
+                            bam_writer.on_reads_complete()
+                        record_completed_bam_reads()
             except GracefulStopRequested as stop:
                 graceful_stop_requested = True
                 if is_main:
@@ -400,65 +424,112 @@ class InferenceEngine:
             return
 
         # Finalize
-        self.accelerator.wait_for_everyone()
+        # Every rank has closed its writer. This filesystem protocol permits an
+        # early rank to wait for a slow tail without the NCCL watchdog timeout.
+        incomplete_read_count = (
+            bam_writer.stats["reads_flushed_incomplete"]
+            if bam_writer is not None
+            else 0
+        )
+        completion_coordinator.mark_rank_complete(
+            incomplete_read_count=incomplete_read_count,
+        )
 
-        if is_main:
-            inference_time = time.perf_counter() - inference_start
-            local_print(f"\nInference complete: {total_batches} batches, {total_samples} samples, {inference_time:.1f}s")
+        if not is_main:
+            completion_coordinator.wait_for_finalization()
+            completion_coordinator.acknowledge_finalization()
+            return
 
-            # Print timing
-            if total_batches > 0:
-                times['preload'] = [0, Preload]
-                times['warmup'] = [0, Warmup]
-                local_print(f"\n{'='*60}")
-                local_print(f"Per-batch timing breakdown:")
-                cover = 0
-                for name, vals in times.items():
-                    vals = vals[1:]
-                    if len(vals) == 0:
-                        continue
-                    avg_ms = sum(vals) / len(vals) * 1000
-                    total_pct = sum(vals) / inference_time * 100
-                    local_print(f"  {name:10s}: {avg_ms:10.2f} ms/batch ({sum(vals):7.2f}/{inference_time:7.2f}={total_pct:5.1f}% total)")
-                    cover += sum(vals)
-                local_print(f"  {'Cover':10s}: {cover:10.2f}/{inference_time:7.2f}={(100*cover/inference_time):5.1f}% total")
-                local_print(f"{'='*60}")
+        local_print("Waiting for all ranks to finish writing their output parts...")
+        completion_coordinator.wait_for_all()
+        incomplete_read_count = completion_coordinator.incomplete_read_count()
+        inference_time = time.perf_counter() - inference_start
+        local_print(f"\nInference complete: {total_batches} batches, {total_samples} samples, {inference_time:.1f}s")
 
-        # Format-specific finalization
+        if total_batches > 0:
+            times['preload'] = [0, Preload]
+            times['warmup'] = [0, Warmup]
+            local_print(f"\n{'='*60}")
+            local_print("Per-batch timing breakdown:")
+            cover = 0
+            for name, vals in times.items():
+                vals = vals[1:]
+                if len(vals) == 0:
+                    continue
+                avg_ms = sum(vals) / len(vals) * 1000
+                total_pct = sum(vals) / inference_time * 100
+                local_print(f"  {name:10s}: {avg_ms:10.2f} ms/batch ({sum(vals):7.2f}/{inference_time:7.2f}={total_pct:5.1f}% total)")
+                cover += sum(vals)
+            local_print(f"  {'Cover':10s}: {cover:10.2f}/{inference_time:7.2f}={(100*cover/inference_time):5.1f}% total")
+            local_print(f"{'='*60}")
+
+        has_incomplete_reads = incomplete_read_count > 0
         finalize_ok = True
-        if bam_writer is not None:
-            if is_main:
+        try:
+            if has_incomplete_reads:
+                local_print(
+                    f"Warning: {incomplete_read_count:,} incomplete read(s) were written with "
+                    "partial MM/ML tags. Finalizing all latest records"
+                )
+            if bam_writer is not None:
                 import glob
 
                 bam_path = normalize_bam_path(self.args.bam_out_dir or self.args.out_dir)
                 part_files = sorted(glob.glob(bam_part_glob(bam_path)))
                 if part_files:
-                    local_print(f"Merging {len(part_files)} rank BAM(s)...")
-                    try:
-                        sort_and_index = bam_has_references(self.args.bam_dir)
-                        finalize_part_bams(str(bam_path), part_files, sort_and_index=sort_and_index)
-                        local_print(f"Final BAM: {bam_path}")
-                    except Exception as e:
+                    selected_part_files = part_files
+                    if resume_checkpoint is not None:
+                        selected_part_files = select_latest_bam_records(part_files)
+                    if not selected_part_files:
                         finalize_ok = False
-                        local_print(f"Warning: Failed to finalize BAM files: {e}")
+                        local_print("Warning: No BAM records were available to finalize")
+                    else:
+                        local_print(f"Merging {len(selected_part_files)} rank BAM(s)...")
+                        try:
+                            sort_and_index = bam_has_references(self.args.bam_dir)
+                            finalize_part_bams(
+                                str(bam_path),
+                                selected_part_files,
+                                sort_and_index=sort_and_index,
+                            )
+                            if resume_checkpoint is not None:
+                                for part_file in part_files:
+                                    if os.path.exists(part_file):
+                                        os.remove(part_file)
+                            if has_incomplete_reads:
+                                local_print(
+                                    f"Final BAM: {bam_path} "
+                                    f"(including {incomplete_read_count:,} incomplete read(s) with "
+                                    "partial MM/ML tags)"
+                                )
+                            else:
+                                local_print(f"Final BAM: {bam_path}")
+                        except Exception as e:
+                            finalize_ok = False
+                            local_print(f"Warning: Failed to finalize BAM files: {e}")
 
-        if tsv_writer is not None:
-            if resume_checkpoint is not None and not finalize_ok:
-                if is_main:
-                    local_print("Skipping TSV merge because BAM finalization failed; resume files were kept")
-            else:
-                try:
-                    if resume_checkpoint is not None and is_main:
+            if tsv_writer is not None:
+                if not finalize_ok:
+                    local_print(
+                        "Skipping TSV merge because BAM finalization was not safe; "
+                        "resume files were kept"
+                    )
+                else:
+                    if resume_checkpoint is not None:
                         tsv_writer.completed_read_ids = resume_checkpoint.refresh_completed_read_ids()
-                    tsv_writer.merge_outputs(is_main_process=is_main)
-                except Exception:
-                    finalize_ok = False
-                    raise
+                    tsv_writer.merge_outputs(is_main_process=True)
 
-        if resume_checkpoint is not None and is_main and finalize_ok:
-            resume_checkpoint.cleanup()
+            if resume_checkpoint is not None and finalize_ok:
+                resume_checkpoint.cleanup()
+        except Exception:
+            finalize_ok = False
+            raise
+        finally:
+            completion_coordinator.mark_finalized(finalize_ok)
 
-        self.accelerator.wait_for_everyone()
+        if finalize_ok:
+            completion_coordinator.wait_for_finalization_acknowledgements()
+            completion_coordinator.cleanup()
     
     # Backward compatibility alias
     def run_bam(self):

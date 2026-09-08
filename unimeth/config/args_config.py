@@ -129,8 +129,8 @@ Model Types:
         parser.add_argument('--model_type', type=str, choices=['default', 'distilled'],
                            default='default', 
                            help='Model architecture: default (100M params) or distilled (62M params, faster)')
-        parser.add_argument('--num_workers', type=int, default=8,
-                           help='Number of CPU workers per GPU for data loading (default: 8, total=8 x num_gpus)')
+        parser.add_argument('--num_workers', type=int, default=2,
+                           help='Number of CPU workers per GPU for data loading (default: 2, total=2 x num_gpus)')
         parser.add_argument('--mapq', dest='mapq_thres', type=int, default=0,
                            help='Minimum BAM mapping quality for aligned reads (default: 0)')
         parser.add_argument('--keep_mv', '--keep-mv', dest='keep_mv', action='store_true',

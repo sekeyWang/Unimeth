@@ -132,7 +132,7 @@ class DataConfig:
     as opposed to ModelConfig which contains model architecture parameters.
     """
     # Data loading
-    num_workers: int = 8
+    num_workers: int = 2
     batch_size: int = 512
     
     # Binning for efficient batching

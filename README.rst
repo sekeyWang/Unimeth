@@ -1,6 +1,12 @@
 Changelog
 =========
 
+v0.2.5
+------
+- Improve multi-GPU BAM resume coordination
+- Finalize incomplete reads and clean temporary files
+- Update the POD5 requirement
+
 v0.2.4
 ------
 - Add ``--resume`` for BAM/modBAM inference

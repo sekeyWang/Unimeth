@@ -100,6 +100,7 @@ class AggregationBAMWriter:
             'patches_received': 0,
             'patches_dropped': 0,
         }
+        self._completed_read_ids: List[str] = []
         
         # Token to methylation type mapping
         self.token_to_type = {tokenizer[t]: t for t in methy_types}
@@ -200,6 +201,13 @@ class AggregationBAMWriter:
         # Generate MM/ML and write
         self._write_read_to_bam(buf)
         self.stats['reads_completed'] += 1
+        self._completed_read_ids.append(read_id)
+
+    def pop_completed_read_ids(self) -> List[str]:
+        """Return reads safely aggregated since the previous call."""
+        completed_read_ids = self._completed_read_ids
+        self._completed_read_ids = []
+        return completed_read_ids
     
     def _extract_positions_scores(
         self,
@@ -300,16 +308,22 @@ class AggregationBAMWriter:
         """Close writer and flush remaining reads."""
         logger.info(f"Closing BAM writer, flushing {len(self.buffer)} remaining reads")
         
-        # Flush all remaining reads
+        # Preserve a partial record for callers that prefer breadth of output over
+        # complete per-read calls. It deliberately remains out of the checkpoint
+        # so a later resume can replace it with a complete record.
         for read_id in list(self.buffer.keys()):
             buf = self.buffer[read_id]
             if not buf.is_complete:
                 logger.warning(
                     f"At close, read {read_id} incomplete: "
-                    f"{len(buf.received)}/{buf.expected}"
+                    f"{len(buf.received)}/{buf.expected}; writing partial MM/ML tags"
                 )
                 self.stats['reads_flushed_incomplete'] += 1
-            self._write_read_to_bam(buf)
+                self._write_read_to_bam(buf)
+            else:
+                self._write_read_to_bam(buf)
+                self.stats['reads_completed'] += 1
+                self._completed_read_ids.append(read_id)
         
         self.buffer.clear()
         self.output_bam.close()
