@@ -41,8 +41,6 @@ conda activate unimeth
 pip install .
 ```
 
-For an editable development installation, use `pip install -e .` instead.
-
 For SLOW5/BLOW5 input, install `pyslow5` separately with `pip install pyslow5`, or install the optional pip extra with `pip install ".[slow5]"`.
 
 ### Option 2. Install with Conda and pip
