@@ -34,7 +34,7 @@ Example usage:
 import argparse
 import datetime
 
-from unimeth.config import merge_with_default_config, defaultconfig
+from unimeth.config import merge_with_default_config, defaultconfig, parse_dorado_version
 from unimeth.training import PretrainTrainer, FinetuneTrainer, CalibrationTrainer
 from unimeth.utils import local_print
 
@@ -63,7 +63,8 @@ def create_training_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument('--batch_size', type=int, help='Batch size for training')
     parser.add_argument('--pore_type', type=str, help='Nanopore type (R9.4.1 or R10.4.1)')
     parser.add_argument('--frequency', type=str, help='Sampling frequency (4khz or 5khz)')
-    parser.add_argument('--dorado_version', type=float, help='Dorado basecaller version')
+    parser.add_argument('--dorado_version', type=parse_dorado_version,
+                        help='Dorado basecaller semantic version')
 
     parser.add_argument('--max_steps', type=int, help='Maximum training steps')
     parser.add_argument('--val_num', type=int, help='Number of validation samples')

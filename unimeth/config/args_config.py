@@ -4,6 +4,31 @@ Unified argument parsing configuration for all modes.
 import argparse
 import datetime
 
+from packaging.version import InvalidVersion, Version
+
+
+def parse_dorado_version(value: str) -> str:
+    """Validate and normalize a full Dorado semantic version."""
+    try:
+        version = Version(value)
+    except InvalidVersion as exc:
+        raise argparse.ArgumentTypeError(f'invalid Dorado version: {value}') from exc
+    if len(version.release) != 3:
+        raise argparse.ArgumentTypeError(
+            "Dorado version must use major.minor.patch format, for example '0.7.1'"
+        )
+    return str(version)
+
+
+def _parse_yes_no(value: str) -> bool:
+    """Parse an explicit yes/no CLI value into a boolean."""
+    normalized = value.lower()
+    if normalized == 'yes':
+        return True
+    if normalized == 'no':
+        return False
+    raise argparse.ArgumentTypeError("expected 'yes' or 'no'")
+
 
 
 def create_argument_parser(mode: str) -> argparse.ArgumentParser:
@@ -33,14 +58,14 @@ Examples:
       --pod5 data.pod5 --bam data.bam \\
       --model model.pt --out results.bam \\
       --cpg 1 --chg 1 --chh 1 \\
-      --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
+      --pore_type R10.4.1 --frequency 5khz --dorado_version 0.7.1
 
   # Multi-GPU BAM output
   accelerate launch --num_processes 8 -m unimeth.inference \\
       --pod5 data.pod5 --bam data.bam \\
       --model model.pt --out results.bam \\
       --cpg 1 --chg 1 --chh 1 \\
-      --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
+      --pore_type R10.4.1 --frequency 5khz --dorado_version 0.7.1
 
   # TSV output with the distilled model
   unimeth infer \\
@@ -48,7 +73,7 @@ Examples:
       --model distilled_model.pt --out results.tsv --output_format tsv \\
       --model_type distilled \\
       --cpg 1 --batch_size 512 \\
-      --pore_type R10.4.1 --frequency 5khz --dorado_version 0.71
+      --pore_type R10.4.1 --frequency 5khz --dorado_version 0.7.1
 
 Model Types:
   default   - 100M params, d_model=384, 12 layers, 4x CNN downsample
@@ -86,8 +111,9 @@ Model Types:
                         help='Nanopore chemistry type')
     parser.add_argument('--frequency', type=str, choices=['4khz', '5khz'],
                         help='Sampling frequency of the data')
-    parser.add_argument('--dorado_version', type=float, 
-                        help='Dorado basecaller version (e.g., 0.71, affects signal norm)')
+    parser.add_argument('--dorado_version', type=parse_dorado_version,
+                        help=('Dorado basecaller semantic version override (e.g., 0.7.1, affects signal norm); '
+                              'inference auto-detects it from the BAM header when omitted'))
     
     # Training-specific arguments
     if mode in ['pretrain', 'finetune', 'calibration']:
@@ -131,8 +157,16 @@ Model Types:
                            help='Model architecture: default (100M params) or distilled (62M params, faster)')
         parser.add_argument('--num_workers', type=int, default=2,
                            help='Number of CPU workers per GPU for data loading (default: 2, total=2 x num_gpus)')
-        parser.add_argument('--mapq', dest='mapq_thres', type=int, default=0,
-                           help='Minimum BAM mapping quality for aligned reads (default: 0)')
+        parser.add_argument('--bam_mode', choices=['auto', 'aligned', 'unaligned'], default='auto',
+                           help='BAM interpretation: auto-detect, aligned, or unaligned (default: auto)')
+        parser.add_argument('--mapq', dest='mapq_thres', type=int, default=1,
+                           help='Minimum mapping quality in aligned BAM mode (default: 1)')
+        parser.add_argument('--identity', dest='identity_thres', type=float, default=0.0,
+                           help='Minimum alignment identity in aligned BAM mode (default: 0.0)')
+        parser.add_argument('--no_supplementary', action='store_true',
+                           help='Skip supplementary records in aligned BAM mode (default: keep)')
+        parser.add_argument('--skip_unmapped', type=_parse_yes_no, default=True, metavar='{yes,no}',
+                           help='Skip unmapped records in aligned BAM mode (default: yes)')
         parser.add_argument('--keep_mv', '--keep-mv', dest='keep_mv', action='store_true',
                            help='Keep mv tag in output modBAM (default: remove mv tag)')
         parser.add_argument('--show_reading_progress', action='store_true',

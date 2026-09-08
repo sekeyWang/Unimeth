@@ -3,11 +3,22 @@ Read processing pipeline.
 
 Provides functions for processing reads into model input format.
 """
+from functools import lru_cache
+
 import numpy as np
+from packaging.version import Version
 
 from unimeth.config import tokenizer
 from .patcher import patch_sequence
 from .sites import get_methy_type
+
+
+DORADO_NORMALIZATION_BOUNDARY = Version('0.7.1')
+
+
+@lru_cache(maxsize=8)
+def _uses_legacy_dorado_normalization(dorado_version: str) -> bool:
+    return Version(dorado_version) <= DORADO_NORMALIZATION_BOUNDARY
 
 
 def weight_bis(num):
@@ -22,7 +33,7 @@ def get_norm_params(feature, frequency, dorado_version):
     Args:
         feature: Feature dictionary with calibration values
         frequency: Sampling frequency ('4khz' or '5khz')
-        dorado_version: Dorado basecaller version
+        dorado_version: Dorado basecaller semantic version
         
     Returns:
         Tuple of (shift, scale)
@@ -31,7 +42,7 @@ def get_norm_params(feature, frequency, dorado_version):
     shift_pa_to_norm, scale_pa_to_norm = feature['shift_pa_to_norm'], feature['scale_pa_to_norm']
     
     if frequency == '5khz':
-        if dorado_version <= 0.71:
+        if _uses_legacy_dorado_normalization(str(dorado_version)):
             shift = 1 - shift_pa_to_norm
             scale = 1 / scale_pa_to_norm
         else:

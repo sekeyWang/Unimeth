@@ -46,15 +46,29 @@ def format_inference_args(args):
     """Format inference arguments for readable output."""
     d_model, num_layers, cnn_stride = get_model_info(args)
 
+    output_items = [('Format', args.output_format)]
+    if args.output_format in ('bam', 'both'):
+        output_items.extend([
+            ('BAM Output', args.bam_out_dir or args.out_dir),
+            ('Keep mv', 'yes' if args.keep_mv else 'no'),
+        ])
+    if args.output_format in ('tsv', 'both'):
+        tsv_output = args.tsv_out_dir or args.out_dir
+        gzip_tsv = args.gzip or str(tsv_output).lower().endswith('.gz')
+        output_items.extend([
+            ('TSV Output', tsv_output),
+            ('Gzip TSV', 'yes' if gzip_tsv else 'no'),
+        ])
+    output_items.append(('Resume', 'yes' if args.resume else 'no'))
+
     sections = {
-        'Input/Output': [
+        'Input': [
             ('Signal', args.signal_dir),
             ('Signal Format', args.signal_format),
             ('BAM', args.bam_dir),
             ('Model', args.model_dir),
-            ('Output', args.out_dir),
-            ('Format', args.output_format),
         ],
+        'Output': output_items,
         'Model Config': [
             ('Type', args.model_type),
             ('d_model', d_model),
@@ -66,6 +80,7 @@ def format_inference_args(args):
             ('Pore Type', args.pore_type),
             ('Frequency', args.frequency),
             ('Dorado Ver', args.dorado_version),
+            ('Dorado Source', getattr(args, 'dorado_version_source', 'configured')),
         ],
         'Methylation': [
             ('CpG', 'yes' if args.cpg else 'no'),
@@ -76,8 +91,16 @@ def format_inference_args(args):
         'Processing': [
             ('Batch Size', args.batch_size),
             ('Workers', args.num_workers),
-            *([('Bins', args.num_bins), ('Max Bin Length', args.max_bin_length)] if args.use_binning else []),
             ('Use Binning', 'yes' if args.use_binning else 'no'),
+            *([('Max Bin Length', args.max_bin_length)] if args.use_binning else []),
+        ],
+        'BAM Filtering (aligned mode only)': [
+            ('Mode', args.bam_mode),
+            ('Chromosomes', args.chr),
+            ('MAPQ >=', args.mapq_thres),
+            ('Identity >=', args.identity_thres),
+            ('Skip Unmapped', 'yes' if args.skip_unmapped else 'no'),
+            ('Supplementary', 'skip' if args.no_supplementary else 'keep'),
         ],
     }
 
@@ -112,12 +135,47 @@ def normalize_signal_input(args, parser):
     return args
 
 
+def resolve_dorado_version(args, parser, detector=None):
+    """Resolve the inference Dorado version from CLI, BAM header, or fallback."""
+    if getattr(args, 'dorado_version', None) is not None:
+        args.dorado_version_source = 'command line'
+        return args
+
+    fallback_version = str(defaultconfig['dorado_version'])
+    bam_path = getattr(args, 'bam_dir', None)
+    if not bam_path:
+        args.dorado_version = fallback_version
+        args.dorado_version_source = 'default (no BAM input)'
+        return args
+
+    if detector is None:
+        from unimeth.ioutils.reader.bam import detect_dorado_version_from_bam
+        detector = detect_dorado_version_from_bam
+
+    try:
+        detected_version = detector(bam_path)
+    except (OSError, ValueError) as exc:
+        parser.error(
+            f"Could not auto-detect Dorado version from BAM header: {exc}. "
+            "Pass --dorado_version major.minor.patch to override auto-detection."
+        )
+
+    if detected_version is None:
+        args.dorado_version = fallback_version
+        args.dorado_version_source = 'default (not found in BAM header)'
+    else:
+        args.dorado_version = detected_version
+        args.dorado_version_source = 'BAM header (auto-detected)'
+    return args
+
+
 def main():
     parser = create_argument_parser('inference')
     if parser.prog.endswith('__main__.py'):
         parser.prog = 'python -m unimeth.inference'
     args = parser.parse_args()
 
+    args = resolve_dorado_version(args, parser)
     args = merge_with_default_config(args, defaultconfig)
     args.mode = 'inference'
     args = normalize_signal_input(args, parser)
