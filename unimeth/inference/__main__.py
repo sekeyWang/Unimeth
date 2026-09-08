@@ -30,7 +30,7 @@ logging.getLogger('transformers.models.bart.modeling_bart').setLevel(logging.ERR
 
 from unimeth.config import create_argument_parser, merge_with_default_config, defaultconfig
 from unimeth.config.model_config import ModelConfig
-from unimeth.utils import local_print
+from unimeth.inference.logging_utils import configure_inference_logging
 
 POD5_SUFFIXES = ('.pod5',)
 SLOW5_SUFFIXES = ('.slow5', '.blow5')
@@ -170,6 +170,7 @@ def resolve_dorado_version(args, parser, detector=None):
 
 
 def main():
+    logger = configure_inference_logging()
     parser = create_argument_parser('inference')
     if parser.prog.endswith('__main__.py'):
         parser.prog = 'python -m unimeth.inference'
@@ -180,7 +181,7 @@ def main():
     args.mode = 'inference'
     args = normalize_signal_input(args, parser)
 
-    local_print(format_inference_args(args))
+    logger.info(format_inference_args(args))
 
     from unimeth.model.datasets import Pod5BamDataset
     from unimeth.inference.engine import InferenceEngine

@@ -1,6 +1,7 @@
 """
 Inference engine for UniMeth.
 """
+import logging
 import time
 import os
 import warnings
@@ -20,7 +21,6 @@ from tqdm import tqdm
 from unimeth.config import tokenizer, get_total_stride
 from unimeth.model.datasets import collate_fn
 from unimeth.model.loader import load_model
-from unimeth.utils import local_print
 from unimeth.ioutils.reader.bam import (
     BamReader,
     bam_index_needs_rebuild,
@@ -45,6 +45,9 @@ from unimeth.inference.resume import (
     ReadCompletionTracker,
     ResumeCheckpoint,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class InferenceEngine:
@@ -242,7 +245,7 @@ class InferenceEngine:
             self.args.resume_completed_read_ids = resume_checkpoint.completed_read_ids
             if is_main:
                 skipped = len(resume_checkpoint.completed_read_ids)
-                local_print(f"Resume enabled: skipping {skipped:,} completed read(s)")
+                logger.info("Resume enabled: skipping %s completed read(s)", f"{skipped:,}")
         else:
             self.args.resume_completed_read_ids = None
 
@@ -418,7 +421,7 @@ class InferenceEngine:
             except GracefulStopRequested as stop:
                 graceful_stop_requested = True
                 if is_main:
-                    local_print(f"\n{stop}; keeping resume files for the next run")
+                    logger.warning("%s; keeping resume files for the next run", stop)
 
         if graceful_stop_requested:
             return
@@ -440,17 +443,22 @@ class InferenceEngine:
             completion_coordinator.acknowledge_finalization()
             return
 
-        local_print("Waiting for all ranks to finish writing their output parts...")
+        logger.info("Waiting for all ranks to finish writing their output parts...")
         completion_coordinator.wait_for_all()
         incomplete_read_count = completion_coordinator.incomplete_read_count()
         inference_time = time.perf_counter() - inference_start
-        local_print(f"\nInference complete: {total_batches} batches, {total_samples} samples, {inference_time:.1f}s")
+        logger.info(
+            "Inference complete: %s batches, %s samples, %.1fs",
+            total_batches,
+            total_samples,
+            inference_time,
+        )
 
         if total_batches > 0:
             times['preload'] = [0, Preload]
             times['warmup'] = [0, Warmup]
-            local_print(f"\n{'='*60}")
-            local_print("Per-batch timing breakdown:")
+            logger.info("%s", '=' * 60)
+            logger.info("Per-batch timing breakdown:")
             cover = 0
             for name, vals in times.items():
                 vals = vals[1:]
@@ -458,18 +466,32 @@ class InferenceEngine:
                     continue
                 avg_ms = sum(vals) / len(vals) * 1000
                 total_pct = sum(vals) / inference_time * 100
-                local_print(f"  {name:10s}: {avg_ms:10.2f} ms/batch ({sum(vals):7.2f}/{inference_time:7.2f}={total_pct:5.1f}% total)")
+                logger.info(
+                    "  %s: %10.2f ms/batch (%7.2f/%7.2f=%5.1f%% total)",
+                    f"{name:10s}",
+                    avg_ms,
+                    sum(vals),
+                    inference_time,
+                    total_pct,
+                )
                 cover += sum(vals)
-            local_print(f"  {'Cover':10s}: {cover:10.2f}/{inference_time:7.2f}={(100*cover/inference_time):5.1f}% total")
-            local_print(f"{'='*60}")
+            logger.info(
+                "  %-10s: %10.2f/%7.2f=%5.1f%% total",
+                'Cover',
+                cover,
+                inference_time,
+                100 * cover / inference_time,
+            )
+            logger.info("%s", '=' * 60)
 
         has_incomplete_reads = incomplete_read_count > 0
         finalize_ok = True
         try:
             if has_incomplete_reads:
-                local_print(
-                    f"Warning: {incomplete_read_count:,} incomplete read(s) were written with "
-                    "partial MM/ML tags. Finalizing all latest records"
+                logger.warning(
+                    "%s incomplete read(s) were written with partial MM/ML tags. "
+                    "Finalizing all latest records",
+                    f"{incomplete_read_count:,}",
                 )
             if bam_writer is not None:
                 import glob
@@ -482,9 +504,9 @@ class InferenceEngine:
                         selected_part_files = select_latest_bam_records(part_files)
                     if not selected_part_files:
                         finalize_ok = False
-                        local_print("Warning: No BAM records were available to finalize")
+                        logger.warning("No BAM records were available to finalize")
                     else:
-                        local_print(f"Merging {len(selected_part_files)} rank BAM(s)...")
+                        logger.info("Merging %s rank BAM(s)...", len(selected_part_files))
                         try:
                             sort_and_index = bam_has_references(self.args.bam_dir)
                             finalize_part_bams(
@@ -497,20 +519,21 @@ class InferenceEngine:
                                     if os.path.exists(part_file):
                                         os.remove(part_file)
                             if has_incomplete_reads:
-                                local_print(
-                                    f"Final BAM: {bam_path} "
-                                    f"(including {incomplete_read_count:,} incomplete read(s) with "
-                                    "partial MM/ML tags)"
+                                logger.info(
+                                    "Final BAM: %s (including %s incomplete read(s) with "
+                                    "partial MM/ML tags)",
+                                    bam_path,
+                                    f"{incomplete_read_count:,}",
                                 )
                             else:
-                                local_print(f"Final BAM: {bam_path}")
+                                logger.info("Final BAM: %s", bam_path)
                         except Exception as e:
                             finalize_ok = False
-                            local_print(f"Warning: Failed to finalize BAM files: {e}")
+                            logger.error("Failed to finalize BAM files: %s", e)
 
             if tsv_writer is not None:
                 if not finalize_ok:
-                    local_print(
+                    logger.warning(
                         "Skipping TSV merge because BAM finalization was not safe; "
                         "resume files were kept"
                     )
