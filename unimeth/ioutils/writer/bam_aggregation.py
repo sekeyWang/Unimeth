@@ -308,21 +308,22 @@ class AggregationBAMWriter:
         """Close writer and flush remaining reads."""
         logger.info(f"Closing BAM writer, flushing {len(self.buffer)} remaining reads")
         
-        # A normal end of iteration must not turn an incomplete patch set into a
-        # partial MM/ML record. Leave it out of the resume checkpoint so a later
-        # invocation can process the full read again.
+        # Preserve a partial record for callers that prefer breadth of output over
+        # complete per-read calls. It deliberately remains out of the checkpoint
+        # so a later resume can replace it with a complete record.
         for read_id in list(self.buffer.keys()):
             buf = self.buffer[read_id]
             if not buf.is_complete:
                 logger.warning(
                     f"At close, read {read_id} incomplete: "
-                    f"{len(buf.received)}/{buf.expected}"
+                    f"{len(buf.received)}/{buf.expected}; writing partial MM/ML tags"
                 )
                 self.stats['reads_flushed_incomplete'] += 1
-                continue
-            self._write_read_to_bam(buf)
-            self.stats['reads_completed'] += 1
-            self._completed_read_ids.append(read_id)
+                self._write_read_to_bam(buf)
+            else:
+                self._write_read_to_bam(buf)
+                self.stats['reads_completed'] += 1
+                self._completed_read_ids.append(read_id)
         
         self.buffer.clear()
         self.output_bam.close()

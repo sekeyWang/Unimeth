@@ -47,11 +47,11 @@ def selected_bam_part_path(part_file: str | Path) -> Path:
     return path.with_name(f".{path.stem}.completed{path.suffix}")
 
 
-def select_completed_bam_records(
+def _select_bam_records(
     part_files: list[str],
-    completed_read_ids: set[str],
+    completed_read_ids: set[str] | None = None,
 ) -> list[str]:
-    """Keep one latest BAM record for each checkpointed read across attempts."""
+    """Keep one latest BAM record per read across attempts."""
     import pysam
 
     selected_paths = []
@@ -63,7 +63,13 @@ def select_completed_bam_records(
             with pysam.AlignmentFile(str(selected_path), "wb", template=input_bam) as output_bam:
                 for bam_read in input_bam:
                     read_id = bam_read.query_name
-                    if read_id not in completed_read_ids or read_id in selected_read_ids:
+                    if (
+                        read_id in selected_read_ids
+                        or (
+                            completed_read_ids is not None
+                            and read_id not in completed_read_ids
+                        )
+                    ):
                         continue
                     output_bam.write(bam_read)
                     selected_read_ids.add(read_id)
@@ -73,6 +79,19 @@ def select_completed_bam_records(
         elif selected_path.exists():
             selected_path.unlink()
     return selected_paths
+
+
+def select_completed_bam_records(
+    part_files: list[str],
+    completed_read_ids: set[str],
+) -> list[str]:
+    """Keep one latest BAM record for each checkpointed read across attempts."""
+    return _select_bam_records(part_files, completed_read_ids)
+
+
+def select_latest_bam_records(part_files: list[str]) -> list[str]:
+    """Keep one latest BAM record for every emitted read across attempts."""
+    return _select_bam_records(part_files)
 
 
 def bam_has_references(bam_path: str) -> bool:

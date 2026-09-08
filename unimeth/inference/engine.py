@@ -34,7 +34,7 @@ from unimeth.ioutils.writer.bam_finalize import (
     bam_part_path,
     finalize_part_bams,
     normalize_bam_path,
-    select_completed_bam_records,
+    select_latest_bam_records,
 )
 from unimeth.inference.coordination import (
     CompletionCoordinator,
@@ -462,14 +462,15 @@ class InferenceEngine:
             local_print(f"  {'Cover':10s}: {cover:10.2f}/{inference_time:7.2f}={(100*cover/inference_time):5.1f}% total")
             local_print(f"{'='*60}")
 
-        finalize_ok = incomplete_read_count == 0
+        has_incomplete_reads = incomplete_read_count > 0
+        finalize_ok = True
         try:
-            if not finalize_ok:
+            if has_incomplete_reads:
                 local_print(
-                    f"Warning: {incomplete_read_count:,} incomplete read(s) were excluded from "
-                    "BAM output. Skipping BAM finalization and keeping resume files"
+                    f"Warning: {incomplete_read_count:,} incomplete read(s) were written with "
+                    "partial MM/ML tags. Finalizing all latest records and keeping resume files"
                 )
-            elif bam_writer is not None:
+            if bam_writer is not None:
                 import glob
 
                 bam_path = normalize_bam_path(self.args.bam_out_dir or self.args.out_dir)
@@ -477,14 +478,10 @@ class InferenceEngine:
                 if part_files:
                     selected_part_files = part_files
                     if resume_checkpoint is not None:
-                        completed_read_ids = resume_checkpoint.refresh_completed_read_ids()
-                        selected_part_files = select_completed_bam_records(
-                            part_files,
-                            completed_read_ids,
-                        )
+                        selected_part_files = select_latest_bam_records(part_files)
                     if not selected_part_files:
                         finalize_ok = False
-                        local_print("Warning: No completed BAM records were available to finalize")
+                        local_print("Warning: No BAM records were available to finalize")
                     else:
                         local_print(f"Merging {len(selected_part_files)} rank BAM(s)...")
                         try:
@@ -494,11 +491,19 @@ class InferenceEngine:
                                 selected_part_files,
                                 sort_and_index=sort_and_index,
                             )
-                            if resume_checkpoint is not None:
+                            if resume_checkpoint is not None and not has_incomplete_reads:
                                 for part_file in part_files:
                                     if os.path.exists(part_file):
                                         os.remove(part_file)
-                            local_print(f"Final BAM: {bam_path}")
+                            if has_incomplete_reads:
+                                local_print(
+                                    f"Final BAM: {bam_path} "
+                                    f"(including {incomplete_read_count:,} incomplete read(s) with "
+                                    "partial MM/ML tags; "
+                                    "resume files retained)"
+                                )
+                            else:
+                                local_print(f"Final BAM: {bam_path}")
                         except Exception as e:
                             finalize_ok = False
                             local_print(f"Warning: Failed to finalize BAM files: {e}")
@@ -514,7 +519,7 @@ class InferenceEngine:
                         tsv_writer.completed_read_ids = resume_checkpoint.refresh_completed_read_ids()
                     tsv_writer.merge_outputs(is_main_process=True)
 
-            if resume_checkpoint is not None and finalize_ok:
+            if resume_checkpoint is not None and finalize_ok and not has_incomplete_reads:
                 resume_checkpoint.cleanup()
         except Exception:
             finalize_ok = False
