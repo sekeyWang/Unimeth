@@ -29,46 +29,7 @@
 - Python 3.12+
 - [Dorado](https://github.com/nanoporetech/dorado) for basecalling
 
-### Option 1. Install via Bioconda
-
-Unimeth is available from Bioconda:
-
-```bash
-conda create -n unimeth \
-  -c conda-forge -c bioconda \
-  --strict-channel-priority \
-  python=3.12 unimeth
-```
-
-Then install a PyTorch build that matches your CUDA environment. For example:
-
-```bash
-conda activate unimeth
-
-pip install --upgrade --force-reinstall \
-  torch==2.5.1 \
-  --index-url https://download.pytorch.org/whl/cu124
-```
-
-If you have cloned this repository, you can use the provided environment file instead:
-
-```bash
-conda env create -f envs/environment-gpu.yml
-conda activate unimeth
-```
-
-### Option 2. Install via pip
-
-```bash
-conda create -n unimeth python=3.12
-conda activate unimeth
-
-pip install unimeth
-```
-
-For SLOW5/BLOW5 input, install `pyslow5` separately with `pip install pyslow5`, or install the optional pip extra with `pip install "unimeth[slow5]"`.
-
-### Option 3. Install from Source
+### Option 1. Install from Source
 
 ```bash
 git clone https://github.com/sekeyWang/Unimeth.git
@@ -78,6 +39,42 @@ conda create -n unimeth python=3.12
 conda activate unimeth
 
 pip install .
+```
+
+For an editable development installation, use `pip install -e .` instead.
+
+For SLOW5/BLOW5 input, install `pyslow5` separately with `pip install pyslow5`, or install the optional pip extra with `pip install ".[slow5]"`.
+
+### Option 2. Install with Conda and pip
+
+```bash
+git clone https://github.com/sekeyWang/Unimeth.git
+cd Unimeth
+
+conda create -y -n unimeth \
+  -c conda-forge -c bioconda \
+  --override-channels --strict-channel-priority \
+  python=3.12 pip \
+  "pytorch=2.5.1=cuda126*" \
+  accelerate transformers numpy tqdm pysam scikit-learn scipy
+
+conda activate unimeth
+
+python -m pip install --only-binary=:all: \
+  "pod5==0.3.44" \
+  "lib-pod5==0.3.44" \
+  "pyarrow>=22,<23"
+
+python -m pip install --no-deps .
+```
+
+### Option 3. Install via pip
+
+```bash
+conda create -n unimeth python=3.12
+conda activate unimeth
+
+pip install unimeth
 ```
 
 Use `unimeth --help` to list utility subcommands, `unimeth --version` to print the installed version.
@@ -230,3 +227,9 @@ This project is licensed under the BSD 3-Clause Clear License. See [LICENSE](LIC
 
 ## 📬 Contact
 - GitHub Issues: [https://github.com/sekeyWang/Unimeth/issues](https://github.com/sekeyWang/Unimeth/issues)
+
+---
+
+## TODO
+- [ ] After the official POD5 Conda packages are fixed, update UniMeth's Conda package, dependencies, and installation instructions.
+- [ ] Create a new `envs/environment-gpu.yml` after the Conda installation path is working.
