@@ -2,6 +2,7 @@
 Finalize BAM part files produced during inference.
 """
 import os
+import re
 from pathlib import Path
 
 
@@ -30,6 +31,48 @@ def merged_unsorted_path(bam_path: str | Path) -> Path:
     """Return the temporary unsorted BAM path for a final BAM path."""
     path = normalize_bam_path(bam_path)
     return path.with_name(f"{path.stem}.merged_unsorted{path.suffix}")
+
+
+def _resume_part_sort_key(part_file: str | Path) -> tuple[int, str]:
+    """Sort base parts before numbered resume attempts."""
+    path = Path(part_file)
+    match = re.search(r"_resume(\d+)$", path.stem)
+    attempt = int(match.group(1)) if match else -1
+    return attempt, path.name
+
+
+def selected_bam_part_path(part_file: str | Path) -> Path:
+    """Return a temporary part path used for resume-safe finalization."""
+    path = Path(part_file)
+    return path.with_name(f".{path.stem}.completed{path.suffix}")
+
+
+def select_completed_bam_records(
+    part_files: list[str],
+    completed_read_ids: set[str],
+) -> list[str]:
+    """Keep one latest BAM record for each checkpointed read across attempts."""
+    import pysam
+
+    selected_paths = []
+    selected_read_ids = set()
+    for part_file in sorted(part_files, key=_resume_part_sort_key, reverse=True):
+        selected_path = selected_bam_part_path(part_file)
+        wrote_record = False
+        with pysam.AlignmentFile(part_file, "rb", check_sq=False) as input_bam:
+            with pysam.AlignmentFile(str(selected_path), "wb", template=input_bam) as output_bam:
+                for bam_read in input_bam:
+                    read_id = bam_read.query_name
+                    if read_id not in completed_read_ids or read_id in selected_read_ids:
+                        continue
+                    output_bam.write(bam_read)
+                    selected_read_ids.add(read_id)
+                    wrote_record = True
+        if wrote_record:
+            selected_paths.append(str(selected_path))
+        elif selected_path.exists():
+            selected_path.unlink()
+    return selected_paths
 
 
 def bam_has_references(bam_path: str) -> bool:
