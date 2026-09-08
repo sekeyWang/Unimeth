@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -71,6 +72,9 @@ class CompletionCoordinator:
     def _final_marker(self) -> Path:
         return self.session_dir / "final.json"
 
+    def _finalization_ack_marker(self, rank: int) -> Path:
+        return self.session_dir / f"rank{rank}.finalized"
+
     def mark_rank_complete(
         self,
         rank: int | None = None,
@@ -132,3 +136,28 @@ class CompletionCoordinator:
                 return bool(json.loads(self._final_marker.read_text(encoding="utf-8"))["success"])
             except (FileNotFoundError, json.JSONDecodeError, KeyError):
                 time.sleep(poll_interval)
+
+    def acknowledge_finalization(self) -> None:
+        """Confirm that this non-main rank observed the finalization result."""
+        _atomic_write(self._finalization_ack_marker(self.rank), "")
+
+    def wait_for_finalization_acknowledgements(
+        self,
+        poll_interval: float = 0.05,
+    ) -> None:
+        """Wait until every non-main rank has observed the final status."""
+        expected = [rank for rank in range(self.num_processes) if rank != self.rank]
+        while not all(self._finalization_ack_marker(rank).exists() for rank in expected):
+            time.sleep(poll_interval)
+
+    def cleanup(self) -> None:
+        """Remove this output's coordination state after successful finalization."""
+        root = self.session_dir.parent
+        manifest_path = root / "active.json"
+        try:
+            session_id = json.loads(manifest_path.read_text(encoding="utf-8"))["session_id"]
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            return
+
+        if self.session_dir.name == f"run-{session_id}" and root.exists():
+            shutil.rmtree(root)

@@ -437,6 +437,7 @@ class InferenceEngine:
 
         if not is_main:
             completion_coordinator.wait_for_finalization()
+            completion_coordinator.acknowledge_finalization()
             return
 
         local_print("Waiting for all ranks to finish writing their output parts...")
@@ -468,7 +469,7 @@ class InferenceEngine:
             if has_incomplete_reads:
                 local_print(
                     f"Warning: {incomplete_read_count:,} incomplete read(s) were written with "
-                    "partial MM/ML tags. Finalizing all latest records and keeping resume files"
+                    "partial MM/ML tags. Finalizing all latest records"
                 )
             if bam_writer is not None:
                 import glob
@@ -491,7 +492,7 @@ class InferenceEngine:
                                 selected_part_files,
                                 sort_and_index=sort_and_index,
                             )
-                            if resume_checkpoint is not None and not has_incomplete_reads:
+                            if resume_checkpoint is not None:
                                 for part_file in part_files:
                                     if os.path.exists(part_file):
                                         os.remove(part_file)
@@ -499,8 +500,7 @@ class InferenceEngine:
                                 local_print(
                                     f"Final BAM: {bam_path} "
                                     f"(including {incomplete_read_count:,} incomplete read(s) with "
-                                    "partial MM/ML tags; "
-                                    "resume files retained)"
+                                    "partial MM/ML tags)"
                                 )
                             else:
                                 local_print(f"Final BAM: {bam_path}")
@@ -519,13 +519,17 @@ class InferenceEngine:
                         tsv_writer.completed_read_ids = resume_checkpoint.refresh_completed_read_ids()
                     tsv_writer.merge_outputs(is_main_process=True)
 
-            if resume_checkpoint is not None and finalize_ok and not has_incomplete_reads:
+            if resume_checkpoint is not None and finalize_ok:
                 resume_checkpoint.cleanup()
         except Exception:
             finalize_ok = False
             raise
         finally:
             completion_coordinator.mark_finalized(finalize_ok)
+
+        if finalize_ok:
+            completion_coordinator.wait_for_finalization_acknowledgements()
+            completion_coordinator.cleanup()
     
     # Backward compatibility alias
     def run_bam(self):
