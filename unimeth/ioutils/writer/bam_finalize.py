@@ -117,7 +117,11 @@ def finalize_part_bams(
     final_path = normalize_bam_path(bam_path)
 
     if len(part_files) == 1:
-        os.rename(part_files[0], final_path)
+        if sort_and_index:
+            pysam.sort("-@", str(threads), "-o", str(final_path), part_files[0])
+            os.remove(part_files[0])
+        else:
+            os.rename(part_files[0], final_path)
     else:
         if sort_and_index:
             merged_unsorted = merged_unsorted_path(final_path)

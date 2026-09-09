@@ -154,6 +154,8 @@ def get_inference_datasets(feature, args):
     for patch_idx, patch in enumerate(patches):
         inference_data = {
             'read_id': feature['read_id'],
+            'signal_read_id': feature.get('signal_read_id', feature['read_id']),
+            'output_record_key': feature.get('output_record_key', feature['read_id']),
             'chr': feature['chr'],
             'strand': feature['strand'],
             'signals': patch['signals'],

@@ -81,12 +81,13 @@ def _calibration_from_record(record):
 class Slow5Reader:
     """POD5 DatasetReader-compatible wrapper for one SLOW5/BLOW5 file."""
 
-    def __init__(self, path):
+    def __init__(self, path, load_read_ids=True):
         self.path = str(path)
         self._slow5 = _open_slow5(path)
         self.read_ids = []
         self._read_id_set = set()
-        self._build_index()
+        if load_read_ids:
+            self._build_index()
 
     def _build_index(self):
         if hasattr(self._slow5, "get_read_ids"):
@@ -105,6 +106,33 @@ class Slow5Reader:
         if record is None:
             raise KeyError(f"Read {read_id} not found in {self.path}")
 
+        return self._adapt_record(read_id, record)
+
+    def get_reads(self, read_ids):
+        """Fetch a small read-ID batch using the native SLOW5 index."""
+        normalized_ids = [_normalize_read_id(read_id) for read_id in read_ids]
+        if not normalized_ids:
+            return {}
+
+        records = None
+        if hasattr(self._slow5, "get_read_list"):
+            for kwargs in ({"aux": "all", "pA": False}, {"aux": "all"}, {}):
+                try:
+                    records = self._slow5.get_read_list(normalized_ids, **kwargs)
+                    break
+                except TypeError:
+                    continue
+        if records is None:
+            records = (self._fetch_record(read_id) for read_id in normalized_ids)
+
+        return {
+            read_id: self._adapt_record(read_id, record)
+            for read_id, record in zip(normalized_ids, records)
+            if record is not None
+        }
+
+    @staticmethod
+    def _adapt_record(read_id, record):
         return SimpleNamespace(
             read_id=read_id,
             signal=_record_signal(record),
@@ -127,3 +155,8 @@ class Slow5Reader:
             if _record_read_id(record) == str(read_id):
                 return record
         return None
+
+    def close(self):
+        close = getattr(self._slow5, "close", None)
+        if close is not None:
+            close()

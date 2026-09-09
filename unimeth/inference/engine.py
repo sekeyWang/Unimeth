@@ -56,6 +56,7 @@ class InferenceEngine:
     def __init__(self, args, dataset_class):
         self.args = args
         self.dataset_class = dataset_class
+        self._legacy_dataset_class = dataset_class
         self.accelerator = Accelerator(dataloader_config=DataLoaderConfiguration(dispatch_batches=False))
         self.model = None
         self.dataset = None
@@ -65,6 +66,14 @@ class InferenceEngine:
         self._bam_index_file = None
         self._bam_index_is_temporary = False
         self._bam_index_created = False
+        self._streaming_enabled = False
+
+    def _should_use_streaming(self) -> bool:
+        """Enable the first streaming path only for one rank without resume."""
+        return (
+            self.accelerator.num_processes == 1
+            and not getattr(self.args, 'resume', False)
+        )
     
     def load_model(self):
         """Load and prepare model for inference."""
@@ -87,7 +96,7 @@ class InferenceEngine:
             args=self.args
         )
         
-        num_workers = getattr(self.args, 'num_workers', 2)
+        num_workers = 0 if self._streaming_enabled else getattr(self.args, 'num_workers', 2)
         import functools
         total_stride = get_total_stride(getattr(self.args, 'model_type', 'default'))
         collate_fn_with_stride = functools.partial(collate_fn, 'inference', total_stride=total_stride)
@@ -96,15 +105,111 @@ class InferenceEngine:
         # Accelerate's IterableDatasetShard shards at the patch level, which would
         # scatter patches from the same read across ranks. We shard at read level
         # inside Pod5BamDataset.__iter__ instead, so each rank gets complete reads.
-        self.dataloader = DataLoader(
-            self.dataset,
+        dataloader_kwargs = dict(
             collate_fn=collate_fn_with_stride,
             batch_size=self.args.batch_size,
             num_workers=num_workers,
             pin_memory=True,
-            prefetch_factor=2,
-            persistent_workers=False
         )
+        if num_workers > 0:
+            dataloader_kwargs.update(
+                prefetch_factor=2,
+                persistent_workers=False,
+            )
+
+        self.dataloader = DataLoader(
+            self.dataset,
+            **dataloader_kwargs,
+        )
+
+    def _create_bam_writer(self, output_path: str):
+        """Create a record-key writer for streaming or the legacy ID writer."""
+        from unimeth.ioutils.writer.bam_aggregation import AggregationBAMWriter
+
+        if self._streaming_enabled:
+            from unimeth.ioutils.reader.bam_stream import BamOffsetReader
+
+            return AggregationBAMWriter(
+                output_path=output_path,
+                template_bam_path=self.args.bam_dir,
+                bam_reader=None,
+                record_reader=BamOffsetReader(self.args.bam_dir),
+                keep_mv=getattr(self.args, 'keep_mv', False),
+            )
+
+        bam_reader = BamReader(
+            self.args.bam_dir,
+            force_rebuild_index=False,
+            index_cache_dir=getattr(self.args, 'bam_index_cache_dir', None),
+            allow_index_build=False,
+        )
+        return AggregationBAMWriter(
+            output_path=output_path,
+            template_bam_path=self.args.bam_dir,
+            bam_reader=bam_reader,
+            keep_mv=getattr(self.args, 'keep_mv', False),
+        )
+
+    def _write_bam_batch(self, bam_writer, preds, methy, batch) -> int:
+        """Write one prediction batch with record keys only on streaming input."""
+        writer_kwargs = dict(
+            preds=preds,
+            methy=methy,
+            read_ids=batch['read_id'],
+            chrs=batch['chr'],
+            strands=batch['strand'],
+            ref_pos=batch['ref_pos'],
+            read_pos=batch['read_pos'],
+            patch_pos=batch['patch_pos'],
+            patch_idx=batch['patch_idx'],
+            total_patches=batch['total_patches'],
+        )
+        if self._streaming_enabled:
+            writer_kwargs['output_record_keys'] = batch['output_record_key']
+        return bam_writer.write_batch(**writer_kwargs)
+
+    def _log_streaming_stats(self, bam_writer):
+        """Log final record-level counters for the BAM-primary pipeline."""
+        if not self._streaming_enabled:
+            return
+
+        bam_stats = getattr(self.dataset, 'bam_stats', None)
+        if bam_stats is not None:
+            logger.info(
+                "BAM records: total=%s, passed=%s",
+                bam_stats.total_records,
+                bam_stats.yielded_records,
+            )
+            logger.info(
+                "BAM filters: unmapped=%s, secondary=%s, duplicate=%s, "
+                "supplementary=%s, mapq=%s, identity=%s, chromosome=%s",
+                bam_stats.filtered_unmapped,
+                bam_stats.filtered_secondary,
+                bam_stats.filtered_duplicate,
+                bam_stats.filtered_supplementary,
+                bam_stats.filtered_mapq,
+                bam_stats.filtered_identity,
+                bam_stats.filtered_chromosome,
+            )
+
+        feature_stats = getattr(self.dataset, 'feature_stats', None)
+        dataset_stats = getattr(self.dataset, 'stats', None)
+        if feature_stats is not None and dataset_stats is not None:
+            logger.info(
+                "Streaming features: signal_missing=%s, feature_empty=%s, "
+                "no_patches=%s, feature_records=%s, yielded_patches=%s",
+                feature_stats.signal_missing_records,
+                feature_stats.feature_empty_records,
+                dataset_stats.records_without_patches,
+                feature_stats.feature_records,
+                dataset_stats.yielded_patches,
+            )
+
+        if bam_writer is not None:
+            logger.info(
+                "Streaming output: records_written=%s",
+                bam_writer.stats.get('records_written', 0),
+            )
 
     def _get_bam_index_cache_dir(self, output_format: str) -> str:
         """Use the selected output file directory for temporary fallback index cache."""
@@ -131,6 +236,63 @@ class InferenceEngine:
             return output_path
 
         raise ValueError("--resume requires an output path")
+
+    def _prepare_signal_routing(self, output_format: str):
+        """Prepare the single-rank signal router without building a BAM ID index."""
+        from unimeth.ioutils.reader.bam_stream import resolve_bam_mode_from_path
+        from unimeth.ioutils.reader.raw_signal import collect_signal_paths
+        from unimeth.ioutils.reader.signal_index import prepare_signal_routing
+
+        signal_paths = collect_signal_paths(
+            self.args.signal_dir,
+            suffixes=getattr(self.args, 'signal_suffixes', None),
+            label=getattr(self.args, 'signal_label', None),
+        )
+        output_path = os.path.abspath(str(self._get_resume_output_path(output_format)))
+        index_path = f"{output_path}.signal-index.sqlite"
+        plan = prepare_signal_routing(signal_paths, index_path=index_path)
+        self.args.signal_routing_plan = plan
+
+        requested_mode = getattr(self.args, 'bam_mode', 'auto')
+        resolved_mode, auto_detected = resolve_bam_mode_from_path(
+            self.args.bam_dir,
+            requested_mode=requested_mode,
+            threads=1,
+        )
+        self.args.resolved_bam_mode = resolved_mode
+        source = "auto-detected" if auto_detected else "configured"
+        logger.info("BAM mode: %s (%s)", resolved_mode, source)
+
+        if plan.uses_index:
+            stats = plan.index_stats
+            action = "reused" if stats.reused else "built"
+            logger.info(
+                "Signal route index %s: %s read(s) across %s file(s) in %.2fs",
+                action,
+                f"{stats.read_count:,}",
+                f"{stats.file_count:,}",
+                stats.elapsed_seconds,
+            )
+        else:
+            logger.info("Signal routing: direct lookup in one signal file")
+
+    def _prepare_input_pipeline(self, output_format: str):
+        """Select streaming or legacy input preparation for this run."""
+        self._streaming_enabled = self._should_use_streaming()
+        if self._streaming_enabled:
+            from unimeth.model.streaming_dataset import BamStreamingDataset
+
+            self.dataset_class = BamStreamingDataset
+            self._prepare_signal_routing(output_format)
+            logger.info("Input pipeline: BAM-primary streaming (single rank, no resume)")
+            return
+
+        self.dataset_class = self._legacy_dataset_class
+        self._prepare_bam_index(output_format)
+        if getattr(self.args, 'resume', False):
+            logger.info("Input pipeline: legacy signal-first (--resume enabled)")
+        else:
+            logger.info("Input pipeline: legacy signal-first (multi-rank run)")
 
     def _wait_for_bam_index(self, bam_path: str, index_file: str):
         """Wait for the main process to finish writing the BAM index."""
@@ -249,7 +411,7 @@ class InferenceEngine:
         else:
             self.args.resume_completed_read_ids = None
 
-        self._prepare_bam_index(output_format)
+        self._prepare_input_pipeline(output_format)
         self.setup_dataloader()
         self.load_model()
 
@@ -273,21 +435,9 @@ class InferenceEngine:
             )
 
         if output_format in ('bam', 'both'):
-            from unimeth.ioutils.writer.bam_aggregation import AggregationBAMWriter
             bam_path = normalize_bam_path(self.args.bam_out_dir if self.args.bam_out_dir else self.args.out_dir)
             rank_bam_path = bam_part_path(bam_path, rank, part_suffix=resume_part_suffix)
-            bam_reader = BamReader(
-                self.args.bam_dir,
-                force_rebuild_index=False,
-                index_cache_dir=getattr(self.args, 'bam_index_cache_dir', None),
-                allow_index_build=False,
-            )
-            bam_writer = AggregationBAMWriter(
-                output_path=str(rank_bam_path),
-                template_bam_path=self.args.bam_dir,
-                bam_reader=bam_reader,
-                keep_mv=getattr(self.args, 'keep_mv', False),
-            )
+            bam_writer = self._create_bam_writer(str(rank_bam_path))
 
         def record_completed_bam_reads():
             """Persist only read IDs confirmed complete by the BAM writer."""
@@ -383,12 +533,11 @@ class InferenceEngine:
                                         patch_pos=batch['patch_pos']
                                     )
                                 if bam_writer is not None:
-                                    n = bam_writer.write_batch(
-                                        preds=preds, methy=methy,
-                                        read_ids=batch['read_id'], chrs=batch['chr'],
-                                        strands=batch['strand'], ref_pos=batch['ref_pos'],
-                                        read_pos=batch['read_pos'], patch_pos=batch['patch_pos'],
-                                        patch_idx=batch['patch_idx'], total_patches=batch['total_patches'],
+                                    n = self._write_bam_batch(
+                                        bam_writer,
+                                        preds,
+                                        methy,
+                                        batch,
                                     )
                                     if tsv_writer is None:
                                         samples_written = n
@@ -453,6 +602,7 @@ class InferenceEngine:
             total_samples,
             inference_time,
         )
+        self._log_streaming_stats(bam_writer)
 
         if total_batches > 0:
             times['preload'] = [0, Preload]

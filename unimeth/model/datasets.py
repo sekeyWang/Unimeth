@@ -170,6 +170,8 @@ def collate_fn(mode, datas, total_stride=4):
             'ref_pos': [sample['ref_pos'] for sample in datas],
             'labels': [sample['labels'] for sample in datas],
             'read_id': [sample['read_id'] for sample in datas],
+            'signal_read_id': [sample.get('signal_read_id', sample['read_id']) for sample in datas],
+            'output_record_key': [sample.get('output_record_key', sample['read_id']) for sample in datas],
             'chr': [sample['chr'] for sample in datas],
             'strand': [sample['strand'] for sample in datas],
             'patch_idx': [sample['patch_idx'] for sample in datas],
@@ -219,7 +221,11 @@ class Binning:
         # Read-level flush: flush all bins every N reads to ensure BAM writer can safely write
         self.reads_per_flush = getattr(args, 'reads_per_flush', 1000)
         self.read_count = 0
-        self.seen_read_ids = set()
+        self.seen_record_keys = set()
+
+    @staticmethod
+    def _record_key(dataset):
+        return dataset.get('output_record_key', dataset.get('read_id'))
 
     def get_data(self, dataset):
         l = len(dataset['signals'])
@@ -227,29 +233,29 @@ class Binning:
             return
         if not self.use_binning:
             yield dataset
-            # Track unique reads
-            read_id = dataset.get('read_id')
-            if self.reads_per_flush is not None and read_id not in self.seen_read_ids:
-                self.seen_read_ids.add(read_id)
+            # Track unique output records (legacy datasets fall back to read_id).
+            record_key = self._record_key(dataset)
+            if self.reads_per_flush is not None and record_key not in self.seen_record_keys:
+                self.seen_record_keys.add(record_key)
                 self.read_count += 1
                 if self.read_count >= self.reads_per_flush:
                     yield {'__reads_complete__': True}
                     self.read_count = 0
-                    self.seen_read_ids.clear()
+                    self.seen_record_keys.clear()
             return
         bin_id = l // self.bin_size
         self.bins[bin_id].append(dataset)
-        # Track unique reads for read-level flush
-        read_id = dataset.get('read_id')
-        if self.reads_per_flush is not None and read_id not in self.seen_read_ids:
-            self.seen_read_ids.add(read_id)
+        # Track unique output records for record-level flush.
+        record_key = self._record_key(dataset)
+        if self.reads_per_flush is not None and record_key not in self.seen_record_keys:
+            self.seen_record_keys.add(record_key)
             self.read_count += 1
             if self.read_count >= self.reads_per_flush:
                 # Flush all bins and signal completion
                 yield from self._flush_all()
                 yield {'__reads_complete__': True}
                 self.read_count = 0
-                self.seen_read_ids.clear()
+                self.seen_record_keys.clear()
         # Normal bin flush based on size
         if len(self.bins[bin_id]) >= self.max_bin_length:
             for x in self.bins[bin_id]:

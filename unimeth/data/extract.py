@@ -17,7 +17,7 @@ class SignalFeatureExtractor:
     Extracts signal events and methylation labels from POD5 and BAM data.
     """
     
-    def __init__(self, args):
+    def __init__(self, args, apply_alignment_filters=True):
         """
         Initialize raw feature extractor.
         
@@ -25,6 +25,7 @@ class SignalFeatureExtractor:
             args: Arguments with mapq_thres, pore_type, chr, and methylation flags
         """
         self.mapq_thres = getattr(args, 'mapq_thres', 10)
+        self.apply_alignment_filters = apply_alignment_filters
         self.align_ref = (getattr(args, 'pore_type', 'R10.4.1') == 'R9.4.1')
         self.chr_mode, self.chr_list = parse_chromosome_filter(getattr(args, 'chr', '|'))
         
@@ -100,11 +101,11 @@ class SignalFeatureExtractor:
 
         # Filter by mapping quality and chromosome only for aligned reads.
         mapq = bam_read.mapping_quality
-        if not is_unmapped and mapq < self.mapq_thres:
+        if self.apply_alignment_filters and not is_unmapped and mapq < self.mapq_thres:
             return None
 
         chrom = bam_read.reference_name if not is_unmapped else '*'
-        if not is_unmapped:
+        if self.apply_alignment_filters and not is_unmapped:
             if self.chr_mode == 'exclude' and chrom in self.chr_list:
                 return None
             elif self.chr_mode == 'include' and chrom not in self.chr_list:

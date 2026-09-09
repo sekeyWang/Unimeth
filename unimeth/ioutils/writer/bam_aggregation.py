@@ -44,6 +44,7 @@ class ReadBuffer:
     """Buffer for aggregating patches of a single read."""
     read_id: str
     expected: int  # Total patches expected
+    output_record_key: int | str | None = None
     received: Dict[int, List[PatchPrediction]] = field(default_factory=lambda: defaultdict(list))
     create_time: float = field(default_factory=time.time)
     
@@ -77,11 +78,15 @@ class AggregationBAMWriter:
         self,
         output_path: str,
         template_bam_path: str,
-        bam_reader: BamReader,
+        bam_reader: BamReader | None,
         keep_mv: bool = False,
+        record_reader=None,
     ):
+        if bam_reader is None and record_reader is None:
+            raise ValueError("bam_reader or record_reader is required")
         self.output_path = output_path
         self.bam_reader = bam_reader
+        self.record_reader = record_reader
         self.keep_mv = keep_mv
         
         # Initialize output BAM with template header
@@ -90,13 +95,14 @@ class AggregationBAMWriter:
         template.close()
         
         # Buffer state: OrderedDict maintains insertion order
-        self.buffer: Dict[str, ReadBuffer] = OrderedDict()
+        self.buffer: Dict[Any, ReadBuffer] = OrderedDict()
         
         # Statistics
         self.stats = {
             'reads_completed': 0,
             'reads_flushed_incomplete': 0,
             'reads_discarded_on_error': 0,
+            'records_written': 0,
             'patches_received': 0,
             'patches_dropped': 0,
         }
@@ -117,6 +123,7 @@ class AggregationBAMWriter:
         patch_pos: List[List[int]],
         patch_idx: List[int],
         total_patches: List[int],
+        output_record_keys: List[int | str] | None = None,
     ) -> int:
         """
         Process a batch of predictions.
@@ -140,20 +147,28 @@ class AggregationBAMWriter:
         sites_processed = 0
         
         for i, read_id in enumerate(read_ids):
+            output_record_key = (
+                output_record_keys[i] if output_record_keys is not None else None
+            )
+            buffer_key = output_record_key if output_record_key is not None else read_id
             num_sites = len(patch_pos[i])
 
             # Initialize buffer for new read
-            if read_id not in self.buffer:
-                self.buffer[read_id] = ReadBuffer(read_id, total_patches[i])
+            if buffer_key not in self.buffer:
+                self.buffer[buffer_key] = ReadBuffer(
+                    read_id,
+                    total_patches[i],
+                    output_record_key=output_record_key,
+                )
 
-            buf = self.buffer[read_id]
+            buf = self.buffer[buffer_key]
             p_idx = patch_idx[i] if isinstance(patch_idx[i], int) else patch_idx[i][0]
 
             if num_sites == 0:
                 # Empty patch: mark as received so it counts toward completeness
                 buf.received[p_idx]  # defaultdict auto-creates empty list
                 if buf.is_complete:
-                    self._flush_complete_read(read_id)
+                    self._flush_complete_read(buffer_key)
                 continue
 
             # Add all sites from this patch
@@ -173,7 +188,7 @@ class AggregationBAMWriter:
 
             # Check if read is complete
             if buf.is_complete:
-                self._flush_complete_read(read_id)
+                self._flush_complete_read(buffer_key)
         
         return sites_processed
     
@@ -187,21 +202,21 @@ class AggregationBAMWriter:
         if not self.buffer:
             return
 
-        for read_id in list(self.buffer.keys()):
-            if self.buffer[read_id].is_complete:
-                self._flush_complete_read(read_id)
+        for record_key in list(self.buffer.keys()):
+            if self.buffer[record_key].is_complete:
+                self._flush_complete_read(record_key)
     
-    def _flush_complete_read(self, read_id: str):
+    def _flush_complete_read(self, record_key):
         """Flush a complete read to BAM."""
-        if read_id not in self.buffer:
+        if record_key not in self.buffer:
             return
         
-        buf = self.buffer.pop(read_id)
+        buf = self.buffer.pop(record_key)
 
         # Generate MM/ML and write
         self._write_read_to_bam(buf)
         self.stats['reads_completed'] += 1
-        self._completed_read_ids.append(read_id)
+        self._completed_read_ids.append(buf.read_id)
 
     def pop_completed_read_ids(self) -> List[str]:
         """Return reads safely aggregated since the previous call."""
@@ -252,13 +267,23 @@ class AggregationBAMWriter:
 
     def _write_read_to_bam(self, buf: ReadBuffer):
         """Write a read's aggregated predictions to BAM."""
-        # Get original BAM read
-        bam_reads = self.bam_reader.get_read_by_id(buf.read_id)
-        if not bam_reads:
-            logger.warning(f"Read {buf.read_id} not found in BAM")
-            return
-        
-        bam_read = bam_reads[0]  # Take primary alignment
+        output_record_key = getattr(buf, 'output_record_key', None)
+        if output_record_key is not None:
+            if self.record_reader is None:
+                logger.warning("No BAM offset reader available for record %s", output_record_key)
+                return
+            try:
+                bam_read = self.record_reader.get_record(output_record_key)
+            except (KeyError, OSError, ValueError) as exc:
+                logger.warning("BAM record %s could not be loaded: %s", output_record_key, exc)
+                return
+        else:
+            # Legacy signal-first path: look up by read ID and retain its old semantics.
+            bam_reads = self.bam_reader.get_read_by_id(buf.read_id)
+            if not bam_reads:
+                logger.warning(f"Read {buf.read_id} not found in BAM")
+                return
+            bam_read = bam_reads[0]
         
         # Get forward sequence (original orientation)
         fwd_seq = bam_read.get_forward_sequence()
@@ -303,6 +328,7 @@ class AggregationBAMWriter:
             if not self.keep_mv and bam_read.has_tag('mv'):
                 bam_read.set_tag('mv', None)
             self.output_bam.write(bam_read)
+            self.stats['records_written'] += 1
     
     def close(self):
         """Close writer and flush remaining reads."""
@@ -311,11 +337,11 @@ class AggregationBAMWriter:
         # Preserve a partial record for callers that prefer breadth of output over
         # complete per-read calls. It deliberately remains out of the checkpoint
         # so a later resume can replace it with a complete record.
-        for read_id in list(self.buffer.keys()):
-            buf = self.buffer[read_id]
+        for record_key in list(self.buffer.keys()):
+            buf = self.buffer[record_key]
             if not buf.is_complete:
                 logger.warning(
-                    f"At close, read {read_id} incomplete: "
+                    f"At close, read {buf.read_id} incomplete: "
                     f"{len(buf.received)}/{buf.expected}; writing partial MM/ML tags"
                 )
                 self.stats['reads_flushed_incomplete'] += 1
@@ -323,14 +349,17 @@ class AggregationBAMWriter:
             else:
                 self._write_read_to_bam(buf)
                 self.stats['reads_completed'] += 1
-                self._completed_read_ids.append(read_id)
+                self._completed_read_ids.append(buf.read_id)
         
         self.buffer.clear()
         self.output_bam.close()
+        if self.record_reader is not None:
+            self.record_reader.close()
         
         # Log statistics
         logger.info(
             f"BAM writer stats: completed={self.stats['reads_completed']}, "
+            f"written={self.stats['records_written']}, "
             f"incomplete={self.stats['reads_flushed_incomplete']}, "
             f"discarded_on_error={self.stats['reads_discarded_on_error']}"
         )
@@ -353,6 +382,8 @@ class AggregationBAMWriter:
 
         self.buffer.clear()
         self.output_bam.close()
+        if self.record_reader is not None:
+            self.record_reader.close()
     
     def __enter__(self):
         return self
