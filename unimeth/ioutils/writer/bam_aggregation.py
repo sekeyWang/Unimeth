@@ -288,7 +288,7 @@ class AggregationBAMWriter:
             c_positions, c_scores = self._extract_positions_scores(
                 c_preds, 'C', fwd_seq, bam_read
             )
-            if c_positions and write_mm_ml_tags(bam_read, c_positions, c_scores, 'C+m,'):
+            if c_positions and write_mm_ml_tags(bam_read, c_positions, c_scores, 'C+m?,'):
                 written = True
         
         # Process A modifications (m6A)
@@ -296,7 +296,7 @@ class AggregationBAMWriter:
             a_positions, a_scores = self._extract_positions_scores(
                 a_preds, 'A', fwd_seq, bam_read
             )
-            if a_positions and write_mm_ml_tags(bam_read, a_positions, a_scores, 'A+a,'):
+            if a_positions and write_mm_ml_tags(bam_read, a_positions, a_scores, 'A+a?,'):
                 written = True
         
         if written:
