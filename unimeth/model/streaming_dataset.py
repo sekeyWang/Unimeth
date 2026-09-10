@@ -54,6 +54,7 @@ class BamStreamingDataset(IterableDataset):
         self.stats = BamStreamingDatasetStats()
         self.bam_stats = None
         self.feature_stats = None
+        self._active_pipeline = None
 
     @staticmethod
     def _is_marker(item) -> bool:
@@ -68,6 +69,12 @@ class BamStreamingDataset(IterableDataset):
                 if not self._is_marker(item):
                     self.stats.yielded_patches += 1
                 yield item
+
+    def close(self) -> None:
+        """Stop and join an active threaded feature pipeline."""
+        pipeline = getattr(self, "_active_pipeline", None)
+        if pipeline is not None:
+            pipeline.close()
 
     def __iter__(self):
         if get_worker_info() is not None:
@@ -138,15 +145,23 @@ class BamStreamingDataset(IterableDataset):
                 ),
                 queue_size=max(2, feature_workers * 2),
             )
-            for bundle_batch in pipeline:
-                for bundle in bundle_batch:
-                    yield from self._yield_record_patches(
-                        bundle.patches,
-                        binning,
-                    )
-            self.feature_stats = merge_feature_worker_stats(
-                pipeline.worker_summaries
-            )
+            self._active_pipeline = pipeline
+            try:
+                for bundle_batch in pipeline:
+                    for bundle in bundle_batch:
+                        yield from self._yield_record_patches(
+                            bundle.patches,
+                            binning,
+                        )
+                self.feature_stats = merge_feature_worker_stats(
+                    pipeline.worker_summaries
+                )
+            finally:
+                try:
+                    pipeline.close()
+                finally:
+                    if self._active_pipeline is pipeline:
+                        self._active_pipeline = None
 
         self.bam_stats = bam_reader.stats
         for item in binning.flush():

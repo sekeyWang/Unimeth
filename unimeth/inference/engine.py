@@ -374,11 +374,30 @@ class InferenceEngine:
         
         return all_preds, all_methy
     
+    def _close_dataset(self):
+        """Release resources owned by an active streaming dataset."""
+        close_dataset = getattr(self.dataset, 'close', None)
+        if callable(close_dataset):
+            close_dataset()
+
     def run(self, output_format: str = 'bam'):
+        run_failed = False
         try:
             return self._run_impl(output_format=output_format)
+        except BaseException:
+            run_failed = True
+            raise
         finally:
-            self._cleanup_bam_index()
+            try:
+                self._close_dataset()
+            except Exception:
+                if not run_failed:
+                    raise
+                logger.exception(
+                    "Failed to close the input pipeline after inference error"
+                )
+            finally:
+                self._cleanup_bam_index()
 
     def _run_impl(self, output_format: str = 'bam'):
         """
@@ -590,9 +609,12 @@ class InferenceEngine:
                                 )
                     finally:
                         pbar.close()
-                        if bam_writer is not None:
-                            bam_writer.on_reads_complete()
-                        record_completed_bam_reads()
+                        try:
+                            self._close_dataset()
+                        finally:
+                            if bam_writer is not None:
+                                bam_writer.on_reads_complete()
+                            record_completed_bam_reads()
             except GracefulStopRequested as stop:
                 graceful_stop_requested = True
                 if is_main:
