@@ -15,6 +15,11 @@ from unimeth.ioutils.reader import (
 )
 from unimeth.ioutils.reader.raw_signal import POD5_SUFFIXES, collect_signal_paths
 from unimeth.model.datasets import Binning
+from unimeth.model.streaming_pipeline import (
+    BamFeatureBatchProcessor,
+    ThreadedBatchPipeline,
+    merge_feature_worker_stats,
+)
 
 
 @dataclass
@@ -54,6 +59,16 @@ class BamStreamingDataset(IterableDataset):
     def _is_marker(item) -> bool:
         return isinstance(item, dict) and item.get("__reads_complete__", False)
 
+    def _yield_record_patches(self, patches, binning):
+        if not patches:
+            self.stats.records_without_patches += 1
+            return
+        for patch in patches:
+            for item in binning.get_data(patch):
+                if not self._is_marker(item):
+                    self.stats.yielded_patches += 1
+                yield item
+
     def __iter__(self):
         if get_worker_info() is not None:
             raise RuntimeError(
@@ -78,37 +93,60 @@ class BamStreamingDataset(IterableDataset):
             chromosome_filter=getattr(self.args, "chr", "|"),
             threads=getattr(self.args, "bam_threads", 1),
         )
-        extractor = SignalFeatureExtractor(
-            self.args,
-            # BamStreamReader already applies every aligned-mode filter before
-            # signal lookup; do not repeat those checks after signal I/O.
-            apply_alignment_filters=False,
-        )
         binning = Binning(self.args)
+        feature_workers = int(getattr(self.args, "num_workers", 2) or 0)
+        if feature_workers < 0:
+            raise ValueError("num_workers must be >= 0")
 
-        router = self.routing_plan.open_router()
-        with SignalBatchLookup(
-            router,
-            max_open_files=getattr(self.args, "signal_max_open_files", 4),
-        ) as signal_lookup:
-            feature_stream = BamSignalFeatureStream(
-                bam_reader,
-                signal_lookup,
-                extractor,
-                batch_size=getattr(self.args, "signal_lookup_batch_size", 256),
+        if feature_workers == 0:
+            extractor = SignalFeatureExtractor(
+                self.args,
+                # BamStreamReader already applies every aligned-mode filter before
+                # signal lookup; do not repeat those checks after signal I/O.
+                apply_alignment_filters=False,
             )
-            for feature in feature_stream:
-                record_has_patches = False
-                for patch in get_datasets(feature, self.args):
-                    record_has_patches = True
-                    for item in binning.get_data(patch):
-                        if not self._is_marker(item):
-                            self.stats.yielded_patches += 1
-                        yield item
-                if not record_has_patches:
-                    self.stats.records_without_patches += 1
-
-            self.feature_stats = feature_stream.stats
+            router = self.routing_plan.open_router()
+            with SignalBatchLookup(
+                router,
+                max_open_files=getattr(self.args, "signal_max_open_files", 4),
+            ) as signal_lookup:
+                feature_stream = BamSignalFeatureStream(
+                    bam_reader,
+                    signal_lookup,
+                    extractor,
+                    batch_size=getattr(
+                        self.args, "signal_lookup_batch_size", 256
+                    ),
+                )
+                for feature in feature_stream:
+                    yield from self._yield_record_patches(
+                        tuple(get_datasets(feature, self.args)),
+                        binning,
+                    )
+                self.feature_stats = feature_stream.stats
+        else:
+            pipeline = ThreadedBatchPipeline(
+                source=bam_reader,
+                worker_factory=lambda worker_id: BamFeatureBatchProcessor(
+                    worker_id,
+                    self.routing_plan,
+                    self.args,
+                ),
+                num_workers=feature_workers,
+                batch_size=getattr(
+                    self.args, "signal_lookup_batch_size", 256
+                ),
+                queue_size=max(2, feature_workers * 2),
+            )
+            for bundle_batch in pipeline:
+                for bundle in bundle_batch:
+                    yield from self._yield_record_patches(
+                        bundle.patches,
+                        binning,
+                    )
+            self.feature_stats = merge_feature_worker_stats(
+                pipeline.worker_summaries
+            )
 
         self.bam_stats = bam_reader.stats
         for item in binning.flush():
