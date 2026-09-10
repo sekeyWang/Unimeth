@@ -71,7 +71,9 @@ class BamStreamingDataset(IterableDataset):
             bam_mode=resolved_bam_mode,
             mapq=getattr(self.args, "mapq_thres", 1),
             identity=getattr(self.args, "identity_thres", 0.0),
-            no_supplementary=getattr(self.args, "no_supplementary", False),
+            include_supplementary=getattr(
+                self.args, "include_supplementary", False
+            ),
             skip_unmapped=getattr(self.args, "skip_unmapped", True),
             chromosome_filter=getattr(self.args, "chr", "|"),
             threads=getattr(self.args, "bam_threads", 1),

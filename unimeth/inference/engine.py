@@ -196,9 +196,13 @@ class InferenceEngine:
         dataset_stats = getattr(self.dataset, 'stats', None)
         if feature_stats is not None and dataset_stats is not None:
             logger.info(
-                "Streaming features: signal_missing=%s, feature_empty=%s, "
-                "no_patches=%s, feature_records=%s, yielded_patches=%s",
+                "Streaming features: signal_missing=%s, "
+                "hard_clipped_reconciled=%s, signal_sequence_mismatch=%s, "
+                "feature_empty=%s, no_patches=%s, feature_records=%s, "
+                "yielded_patches=%s",
                 feature_stats.signal_missing_records,
+                feature_stats.hard_clipped_reconciled_records,
+                feature_stats.signal_sequence_mismatch_records,
                 feature_stats.feature_empty_records,
                 dataset_stats.records_without_patches,
                 feature_stats.feature_records,

@@ -100,7 +100,7 @@ def format_inference_args(args):
             ('MAPQ >=', args.mapq_thres),
             ('Identity >=', args.identity_thres),
             ('Skip Unmapped', 'yes' if args.skip_unmapped else 'no'),
-            ('Supplementary', 'skip' if args.no_supplementary else 'keep'),
+            ('Supplementary', 'keep' if args.include_supplementary else 'skip'),
         ],
     }
 

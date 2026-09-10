@@ -163,8 +163,8 @@ Model Types:
                            help='Minimum mapping quality in aligned BAM mode (default: 1)')
         parser.add_argument('--identity', dest='identity_thres', type=float, default=0.0,
                            help='Minimum alignment identity in aligned BAM mode (default: 0.0)')
-        parser.add_argument('--no_supplementary', action='store_true',
-                           help='Skip supplementary records in aligned BAM mode (default: keep)')
+        parser.add_argument('--include_supplementary', action='store_true',
+                           help='Process supplementary records in aligned BAM mode (default: skip)')
         parser.add_argument('--skip_unmapped', type=_parse_yes_no, default=True, metavar='{yes,no}',
                            help='Skip unmapped records in aligned BAM mode (default: yes)')
         parser.add_argument('--keep_mv', '--keep-mv', dest='keep_mv', action='store_true',

@@ -129,7 +129,7 @@ class BamStreamReader:
         bam_mode: BamMode = "auto",
         mapq: int = 1,
         identity: float = 0.0,
-        no_supplementary: bool = False,
+        include_supplementary: bool = False,
         skip_unmapped: bool = True,
         chromosome_filter: str = "|",
         threads: int = 1,
@@ -145,7 +145,7 @@ class BamStreamReader:
         self.requested_bam_mode = bam_mode
         self.mapq = mapq
         self.identity = identity
-        self.no_supplementary = no_supplementary
+        self.include_supplementary = include_supplementary
         self.skip_unmapped = skip_unmapped
         self.chromosome_mode, self.chromosomes = _parse_chromosome_filter(
             chromosome_filter
@@ -166,7 +166,7 @@ class BamStreamReader:
             return "filtered_secondary"
         if bam_record.is_duplicate:
             return "filtered_duplicate"
-        if bam_record.is_supplementary and self.no_supplementary:
+        if bam_record.is_supplementary and not self.include_supplementary:
             return "filtered_supplementary"
 
         # MAPQ and identity are undefined for unmapped records. When the user

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Iterator
 
+from unimeth.data.extract import SignalSequenceMismatchError
+
 
 @dataclass
 class BamSignalFeatureStreamStats:
@@ -12,6 +14,8 @@ class BamSignalFeatureStreamStats:
 
     lookup_batches: int = 0
     signal_missing_records: int = 0
+    hard_clipped_reconciled_records: int = 0
+    signal_sequence_mismatch_records: int = 0
     feature_empty_records: int = 0
     feature_records: int = 0
 
@@ -53,12 +57,18 @@ class BamSignalFeatureStream:
                     self.stats.signal_missing_records += 1
                     continue
 
-                feature = self.extractor.get_feature(item.bam_record, signal_read)
+                try:
+                    feature = self.extractor.get_feature(item.bam_record, signal_read)
+                except SignalSequenceMismatchError:
+                    self.stats.signal_sequence_mismatch_records += 1
+                    continue
                 if feature is None:
                     self.stats.feature_empty_records += 1
                     continue
 
                 feature = dict(feature)
+                if feature.pop("hard_clipped_reconciled", False):
+                    self.stats.hard_clipped_reconciled_records += 1
                 feature["signal_read_id"] = item.signal_read_id
                 feature["output_record_key"] = item.output_record_key
                 self.stats.feature_records += 1

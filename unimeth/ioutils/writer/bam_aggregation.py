@@ -325,6 +325,10 @@ class AggregationBAMWriter:
                 written = True
         
         if written:
+            # MM/ML coordinates describe the current BAM record SEQ. Rewrite MN
+            # as well because hard-clipped supplementary records may carry the
+            # parent record's stale sequence length.
+            bam_read.set_tag('MN', len(fwd_seq), value_type='i')
             if not self.keep_mv and bam_read.has_tag('mv'):
                 bam_read.set_tag('mv', None)
             self.output_bam.write(bam_read)
