@@ -456,8 +456,14 @@ class InferenceEngine:
         pbar = tqdm(desc=pbar_desc, unit="batch", disable=not is_main, dynamic_ncols=True)
 
         # Timing
-        times = {'model': [], 'extract': [], 'write': [], 'other': []}
-        t3 = inference_start = time.perf_counter()
+        times = {
+            'data_wait': [],
+            'model': [],
+            'extract': [],
+            'write': [],
+            'control': [],
+        }
+        inference_start = time.perf_counter()
         Preload = Warmup = 0
 
         # Context manager helper: open all active writers
@@ -478,12 +484,20 @@ class InferenceEngine:
                             batch_iter = enumerate(self.dataloader)
                             while True:
                                 graceful_stopper.raise_if_requested()
+                                wait_start = time.perf_counter()
                                 try:
                                     batch_idx, batch = next(batch_iter)
                                 except StopIteration:
                                     break
+                                times['data_wait'].append(
+                                    time.perf_counter() - wait_start
+                                )
+                                control_start = time.perf_counter()
 
                                 if self.args.limit is not None and batch_idx >= self.args.limit:
+                                    times['control'].append(
+                                        time.perf_counter() - control_start
+                                    )
                                     break
 
                                 total_batches += 1
@@ -501,10 +515,15 @@ class InferenceEngine:
                                         bam_writer.on_reads_complete()
                                     record_completed_bam_reads()
                                     graceful_stopper.raise_if_requested()
+                                    times['control'].append(
+                                        time.perf_counter() - control_start
+                                    )
                                     continue
 
                                 # Model forward — manually move tensors to device (dataloader not prepared)
-                                times['other'].append(time.perf_counter() - t3)
+                                times['control'].append(
+                                    time.perf_counter() - control_start
+                                )
                                 t0 = time.perf_counter()
                                 logits = self.model(
                                     signals=batch['signals'].to(self.accelerator.device),
@@ -547,6 +566,7 @@ class InferenceEngine:
                                         samples_written = n
                                 times['write'].append(time.perf_counter() - t2)
                                 total_samples += samples_written
+                                control_start = time.perf_counter()
 
                                 # Flush BAM buffer when marker was co-batched with data
                                 if has_reads_complete_marker and bam_writer is not None:
@@ -565,7 +585,9 @@ class InferenceEngine:
                                 pbar.update(1)
                                 elapsed = time.perf_counter() - inference_start
                                 pbar.set_postfix_str(f'{total_samples:,} samples, {total_samples/elapsed:,.0f}/s')
-                                t3 = time.perf_counter()
+                                times['control'][-1] += (
+                                    time.perf_counter() - control_start
+                                )
                     finally:
                         pbar.close()
                         if bam_writer is not None:
