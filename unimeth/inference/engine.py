@@ -396,8 +396,12 @@ class InferenceEngine:
         if total_sites == 0:
             return torch.tensor([], device=device), torch.tensor([], device=device, dtype=torch.long)
         
-        # Build flat indices on CPU then move to GPU (avoids large padded tensor)
-        batch_indices = torch.arange(batch_size).repeat_interleave(torch.tensor(site_counts)).to(device)
+        # Build compact gather indices directly on the inference device.
+        site_counts_tensor = torch.as_tensor(site_counts, device=device)
+        batch_indices = torch.arange(
+            batch_size,
+            device=device,
+        ).repeat_interleave(site_counts_tensor)
         
         pos_tensors = [torch.as_tensor(p, device=device) for p in patch_pos if len(p) > 0]
         pos_indices = torch.cat(pos_tensors)
@@ -411,7 +415,7 @@ class InferenceEngine:
         all_preds = probs[:, 1]
         
         # Gather methylation types
-        all_methy = decoder_input_ids.to(device)[batch_indices, pos_indices]
+        all_methy = decoder_input_ids[batch_indices, pos_indices]
         
         return all_preds, all_methy
     
@@ -533,6 +537,7 @@ class InferenceEngine:
             'write': [],
             'control': [],
         }
+        profile_timing = logger.isEnabledFor(logging.DEBUG)
         inference_start = time.perf_counter()
         Preload = Warmup = 0
 
@@ -551,7 +556,7 @@ class InferenceEngine:
                         stack.enter_context(w)
 
                     try:
-                        with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                        with torch.inference_mode(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
                             dataloader_iterator = iter(self.dataloader)
                             if self._streaming_enabled:
                                 self.dataset.start_producer()
@@ -599,23 +604,42 @@ class InferenceEngine:
                                     time.perf_counter() - control_start
                                 )
                                 t0 = time.perf_counter()
-                                logits = self.model(
-                                    signals=batch['signals'].to(self.accelerator.device),
-                                    encoder_mask=batch['encoder_mask'].to(self.accelerator.device),
-                                    decoder_input_ids=batch['decoder_input_ids'].to(self.accelerator.device),
-                                    signal_pos=batch['signal_pos'].to(self.accelerator.device),
+                                device = self.accelerator.device
+                                signals = batch['signals'].to(
+                                    device,
+                                    non_blocking=True,
                                 )
-                                torch.cuda.synchronize()
+                                encoder_mask = batch['encoder_mask'].to(
+                                    device,
+                                    non_blocking=True,
+                                )
+                                decoder_input_ids = batch['decoder_input_ids'].to(
+                                    device,
+                                    non_blocking=True,
+                                )
+                                signal_pos = batch['signal_pos'].to(
+                                    device,
+                                    non_blocking=True,
+                                )
+                                logits = self.model(
+                                    signals=signals,
+                                    encoder_mask=encoder_mask,
+                                    decoder_input_ids=decoder_input_ids,
+                                    signal_pos=signal_pos,
+                                )
+                                if profile_timing:
+                                    torch.cuda.synchronize()
                                 times['model'].append(time.perf_counter() - t0)
 
                                 # Extract predictions
                                 t1 = time.perf_counter()
                                 preds, methy = self._extract_predictions(
-                                    batch['decoder_input_ids'],
+                                    decoder_input_ids,
                                     logits,
                                     batch['patch_pos']
                                 )
-                                torch.cuda.synchronize()
+                                if profile_timing:
+                                    torch.cuda.synchronize()
                                 times['extract'].append(time.perf_counter() - t1)
 
                                 # Write (same preds/methy to all active writers)
@@ -699,7 +723,7 @@ class InferenceEngine:
         )
         self._log_streaming_stats(bam_writer)
 
-        if total_batches > 0:
+        if total_batches > 0 and profile_timing:
             logger.debug("%s", '=' * 60)
             logger.debug("Inference timing breakdown:")
             cover = Preload + Warmup
