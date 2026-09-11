@@ -173,6 +173,7 @@ class BamStreamReader:
         skip_unmapped: bool = True,
         chromosome_filter: str = "|",
         threads: int = 1,
+        limit: int | None = None,
     ):
         if bam_mode not in ("auto", "aligned", "unaligned"):
             raise ValueError(f"unsupported BAM mode: {bam_mode}")
@@ -180,6 +181,8 @@ class BamStreamReader:
             raise ValueError("mapq must be >= 0")
         if not 0.0 <= identity <= 1.0:
             raise ValueError("identity must be between 0.0 and 1.0")
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be >= 0")
 
         self.bam_path = bam_path
         self.requested_bam_mode = bam_mode
@@ -191,6 +194,7 @@ class BamStreamReader:
             chromosome_filter
         )
         self.threads = max(1, int(threads or 1))
+        self.limit = limit
 
         self.bam_mode: ResolvedBamMode | None = None
         self.mode_was_auto_detected = False
@@ -238,6 +242,11 @@ class BamStreamReader:
             )
 
             while True:
+                if (
+                    self.limit is not None
+                    and self.stats.yielded_records >= self.limit
+                ):
+                    break
                 record_offset = bam_file.tell()
                 try:
                     bam_record = next(bam_file)

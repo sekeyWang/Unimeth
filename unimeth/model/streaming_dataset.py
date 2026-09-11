@@ -67,6 +67,17 @@ class BamStreamingDataset(IterableDataset):
         self._worker_stop_event = None
         self._parallel_workers = 0
         self._producer = None
+        self._active_bam_reader = None
+
+    @property
+    def progress_stats(self):
+        """Expose live BAM scan counters to the main-process progress bar."""
+        producer = self._producer
+        if producer is not None:
+            return producer.progress_stats
+        if self._active_bam_reader is not None:
+            return self._active_bam_reader.stats
+        return self.bam_stats
 
     @staticmethod
     def _is_marker(item) -> bool:
@@ -99,6 +110,7 @@ class BamStreamingDataset(IterableDataset):
             skip_unmapped=getattr(self.args, "skip_unmapped", True),
             chromosome_filter=getattr(self.args, "chr", "|"),
             threads=getattr(self.args, "bam_threads", 1),
+            limit=getattr(self.args, "limit", None),
         )
 
     def configure_parallel_workers(self, num_workers: int) -> None:
@@ -214,7 +226,13 @@ class BamStreamingDataset(IterableDataset):
         binning.reads_per_flush = None
 
         if worker_info is None:
-            yield from self._iter_direct(self._make_bam_reader(), binning)
+            bam_reader = self._make_bam_reader()
+            self._active_bam_reader = bam_reader
+            try:
+                yield from self._iter_direct(bam_reader, binning)
+            finally:
+                self.bam_stats = bam_reader.stats
+                self._active_bam_reader = None
         else:
             yield from self._iter_parallel(worker_info.id, binning)
 

@@ -42,6 +42,10 @@ from unimeth.inference.resume import (
     ReadCompletionTracker,
     ResumeCheckpoint,
 )
+from unimeth.inference.progress import (
+    RecordCompletionTracker,
+    format_compact_count,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -526,8 +530,16 @@ class InferenceEngine:
 
         pbar_desc = {'tsv': 'Inference', 'bam': 'Inference (BAM)', 'both': 'Inference (TSV+BAM)'}.get(output_format, 'Inference')
 
-        total_batches = total_samples = 0
-        pbar = tqdm(desc=pbar_desc, unit=" batch", disable=not is_main, dynamic_ncols=True)
+        total_batches = total_samples = total_completed_records = 0
+        record_progress = (
+            RecordCompletionTracker() if bam_writer is None else None
+        )
+        pbar = tqdm(
+            desc=pbar_desc,
+            unit=" record",
+            disable=not is_main,
+            dynamic_ncols=True,
+        )
 
         # Timing
         times = {
@@ -572,12 +584,6 @@ class InferenceEngine:
                                     time.perf_counter() - wait_start
                                 )
                                 control_start = time.perf_counter()
-
-                                if self.args.limit is not None and batch_idx >= self.args.limit:
-                                    times['control'].append(
-                                        time.perf_counter() - control_start
-                                    )
-                                    break
 
                                 total_batches += 1
 
@@ -674,15 +680,48 @@ class InferenceEngine:
                                 if resume_tracker is not None:
                                     resume_tracker.update_batch(batch)
 
+                                if bam_writer is not None:
+                                    total_completed_records = bam_writer.stats[
+                                        'records_written'
+                                    ]
+                                else:
+                                    total_completed_records += (
+                                        record_progress.update_batch(
+                                            batch['output_record_key'],
+                                            batch['patch_idx'],
+                                            batch['total_patches'],
+                                        )
+                                    )
+
                                 graceful_stopper.raise_if_requested()
 
                                 if batch_idx == 0:
                                     Preload = t0 - inference_start
                                     Warmup = time.perf_counter() - t0
 
-                                pbar.update(1)
+                                pbar.update(
+                                    max(
+                                        0,
+                                        total_completed_records - int(pbar.n),
+                                    )
+                                )
                                 elapsed = time.perf_counter() - inference_start
-                                pbar.set_postfix_str(f'{total_samples:,} samples, {total_samples/elapsed:,.0f}/s')
+                                progress_parts = []
+                                input_stats = getattr(
+                                    self.dataset,
+                                    'progress_stats',
+                                    None,
+                                )
+                                if input_stats is not None:
+                                    progress_parts.extend((
+                                        f'{input_stats.total_records:,} scan',
+                                        f'{input_stats.yielded_records:,} pass',
+                                    ))
+                                progress_parts.extend((
+                                    f'{format_compact_count(total_samples)} sites',
+                                    f'{total_samples / elapsed:,.0f} sites/s',
+                                ))
+                                pbar.set_postfix_str(', '.join(progress_parts))
                                 times['control'][-1] += (
                                     time.perf_counter() - control_start
                                 )
@@ -714,9 +753,12 @@ class InferenceEngine:
             if bam_writer is not None
             else 0
         )
+        if bam_writer is not None:
+            total_completed_records = bam_writer.stats['records_written']
         inference_time = time.perf_counter() - inference_start
         logger.info(
-            "Inference complete: %s batches, %s samples, %.1fs",
+            "Inference complete: %s records, %s batches, %s sites, %.1fs",
+            total_completed_records,
             total_batches,
             total_samples,
             inference_time,

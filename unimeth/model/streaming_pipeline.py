@@ -186,7 +186,16 @@ class RecordBatchProducer:
         self.stop_event = Event()
         self.source_stats = None
         self.failure: RecordStreamFailure | None = None
+        self._source = None
         self._thread: Thread | None = None
+
+    @property
+    def progress_stats(self):
+        """Return live source counters while production is running."""
+        source = self._source
+        if source is not None:
+            return getattr(source, "stats", self.source_stats)
+        return self.source_stats
 
     def _put(self, item: Any) -> bool:
         while not self.stop_event.is_set():
@@ -207,6 +216,7 @@ class RecordBatchProducer:
         source_iterator = None
         try:
             source = self.source_factory()
+            self._source = source
             source_iterator = iter(source)
             batch = []
             for item in source_iterator:

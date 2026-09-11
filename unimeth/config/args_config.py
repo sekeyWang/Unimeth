@@ -141,7 +141,7 @@ Model Types:
         parser.add_argument('--out_dir', '--out', dest='out_dir', type=str,
                            help='Output file path (.txt for TSV, .bam for BAM)')
         parser.add_argument('--limit', type=int, default=None, 
-                           help='Process only first N batches (for quick testing)')
+                           help='Process only the first N BAM records that pass filtering')
         parser.add_argument('--output_format', type=str, choices=['tsv', 'bam', 'both'],
                            default='bam', help='Output format: bam (default), tsv, or both (dual output for verification)')
         parser.add_argument('--tsv_out_dir', '--tsv_out', dest='tsv_out_dir', type=str, default=None,
