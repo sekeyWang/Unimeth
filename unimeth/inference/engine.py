@@ -47,6 +47,27 @@ from unimeth.inference.resume import (
 logger = logging.getLogger(__name__)
 
 
+def _format_timing_entry(
+    name: str,
+    elapsed_seconds: float,
+    inference_seconds: float,
+    batch_count: int | None = None,
+) -> str:
+    """Format either a per-batch average or a one-time inference cost."""
+    if batch_count is None:
+        display_ms = elapsed_seconds * 1000
+        unit = "ms"
+    else:
+        display_ms = elapsed_seconds / batch_count * 1000
+        unit = "ms/batch"
+    total_pct = elapsed_seconds / inference_seconds * 100
+    return (
+        f"  {name:10s}: {display_ms:10.2f} {unit:<8s} "
+        f"({elapsed_seconds:7.2f}s/{inference_seconds:7.2f}s="
+        f"{total_pct:5.1f}% total)"
+    )
+
+
 class InferenceEngine:
     """Unified inference engine supporting TSV/BAM output formats."""
     
@@ -659,28 +680,38 @@ class InferenceEngine:
         self._log_streaming_stats(bam_writer)
 
         if total_batches > 0:
-            times['preload'] = [0, Preload]
-            times['warmup'] = [0, Warmup]
             logger.debug("%s", '=' * 60)
-            logger.debug("Per-batch timing breakdown:")
-            cover = 0
+            logger.debug("Inference timing breakdown:")
+            cover = Preload + Warmup
             for name, vals in times.items():
                 vals = vals[1:]
                 if len(vals) == 0:
                     continue
-                avg_ms = sum(vals) / len(vals) * 1000
-                total_pct = sum(vals) / inference_time * 100
+                elapsed = sum(vals)
                 logger.debug(
-                    "  %s: %10.2f ms/batch (%7.2f/%7.2f=%5.1f%% total)",
-                    f"{name:10s}",
-                    avg_ms,
-                    sum(vals),
-                    inference_time,
-                    total_pct,
+                    "%s",
+                    _format_timing_entry(
+                        name,
+                        elapsed,
+                        inference_time,
+                        batch_count=len(vals),
+                    ),
                 )
-                cover += sum(vals)
+                cover += elapsed
+            for name, elapsed in (
+                ('preload', Preload),
+                ('warmup', Warmup),
+            ):
+                logger.debug(
+                    "%s",
+                    _format_timing_entry(
+                        name,
+                        elapsed,
+                        inference_time,
+                    ),
+                )
             logger.debug(
-                "  %-10s: %10.2f/%7.2f=%5.1f%% total",
+                "  %-10s: %10.2fs/%7.2fs=%5.1f%% total",
                 'Cover',
                 cover,
                 inference_time,
