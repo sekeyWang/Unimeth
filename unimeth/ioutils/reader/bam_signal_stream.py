@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Iterable, Iterator
 
 from unimeth.data.extract import SignalSequenceMismatchError
+from unimeth.ioutils.reader.signal_lookup import SignalLookupRequest
 
 
 @dataclass
@@ -14,6 +15,7 @@ class BamSignalFeatureStreamStats:
 
     lookup_batches: int = 0
     signal_missing_records: int = 0
+    signal_source_hint_missing_records: int = 0
     hard_clipped_reconciled_records: int = 0
     signal_sequence_mismatch_records: int = 0
     feature_empty_records: int = 0
@@ -47,14 +49,24 @@ class BamSignalFeatureStream:
         self.stats = BamSignalFeatureStreamStats()
         for bam_batch in _batched(self.bam_items, self.batch_size):
             signal_batch = self.signal_lookup.get_batch(
-                item.signal_read_id for item in bam_batch
+                SignalLookupRequest(
+                    output_record_key=item.output_record_key,
+                    signal_read_id=item.signal_read_id,
+                    signal_source_hint=item.signal_source_hint,
+                )
+                for item in bam_batch
             )
             self.stats.lookup_batches += 1
+            self.stats.signal_missing_records += len(
+                signal_batch.missing_record_keys
+            )
+            self.stats.signal_source_hint_missing_records += len(
+                signal_batch.missing_source_hint_record_keys
+            )
 
             for item in bam_batch:
-                signal_read = signal_batch.reads.get(item.signal_read_id)
+                signal_read = signal_batch.reads.get(item.output_record_key)
                 if signal_read is None:
-                    self.stats.signal_missing_records += 1
                     continue
 
                 try:

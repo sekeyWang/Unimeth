@@ -16,10 +16,30 @@ class SignalBatchReader(Protocol):
 
 @dataclass(frozen=True)
 class SignalLookupBatch:
-    """Found signal records and the requested IDs that could not be loaded."""
+    """Signals keyed by BAM record plus requests that could not be resolved."""
 
-    reads: dict[str, object]
+    reads: dict[int | str, object]
     missing_read_ids: tuple[str, ...]
+    missing_record_keys: tuple[int | str, ...] = ()
+    missing_source_hint_record_keys: tuple[int | str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SignalLookupRequest:
+    """One BAM record's request for its parent raw signal."""
+
+    output_record_key: int | str
+    signal_read_id: str
+    signal_source_hint: str | None = None
+
+
+class SignalSourceHintError(RuntimeError):
+    """Raised when a BAM fn tag cannot select one signal-file candidate."""
+
+
+def _source_basename(value: str) -> str:
+    """Normalize BAM fn values and local paths to a portable basename."""
+    return str(value).replace("\\", "/").rsplit("/", 1)[-1]
 
 
 class _Pod5BatchReader:
@@ -91,22 +111,100 @@ class SignalBatchLookup:
         self._readers[path] = reader
         return reader
 
-    def get_batch(self, read_ids: Iterable[str]) -> SignalLookupBatch:
-        requested = tuple(dict.fromkeys(str(read_id) for read_id in read_ids))
-        routes = self.router.lookup_many(requested)
-        grouped: dict[str, list[str]] = defaultdict(list)
-        for read_id in requested:
-            path = routes.get(read_id)
-            if path is not None:
-                grouped[path].append(read_id)
+    def get_batch(
+        self,
+        requests: Iterable[SignalLookupRequest | str],
+    ) -> SignalLookupBatch:
+        normalized = []
+        seen_record_keys = set()
+        for request in requests:
+            is_lookup_request = isinstance(request, SignalLookupRequest)
+            if is_lookup_request:
+                normalized_request = request
+            else:
+                read_id = str(request)
+                normalized_request = SignalLookupRequest(
+                    output_record_key=read_id,
+                    signal_read_id=read_id,
+                )
+            if normalized_request.output_record_key in seen_record_keys:
+                if not is_lookup_request:
+                    continue
+                raise ValueError(
+                    "output_record_key must be unique within a signal lookup batch"
+                )
+            seen_record_keys.add(normalized_request.output_record_key)
+            normalized.append(normalized_request)
 
-        found: dict[str, object] = {}
-        for path, routed_ids in grouped.items():
-            found.update(self._get_reader(path).get_many(routed_ids))
+        signal_read_ids = tuple(
+            dict.fromkeys(request.signal_read_id for request in normalized)
+        )
+        lookup_candidates = getattr(self.router, "lookup_candidates_many", None)
+        if lookup_candidates is None:
+            routes = self.router.lookup_many(signal_read_ids)
+            candidates = {
+                read_id: (path,)
+                for read_id, path in routes.items()
+            }
+        else:
+            candidates = lookup_candidates(signal_read_ids)
 
-        reads = {read_id: found[read_id] for read_id in requested if read_id in found}
-        missing = tuple(read_id for read_id in requested if read_id not in found)
-        return SignalLookupBatch(reads=reads, missing_read_ids=missing)
+        grouped: dict[str, list[SignalLookupRequest]] = defaultdict(list)
+        missing_record_keys = []
+        missing_read_ids = []
+        missing_source_hint_record_keys = []
+        for request in normalized:
+            paths = candidates.get(request.signal_read_id, ())
+            if not paths:
+                missing_record_keys.append(request.output_record_key)
+                missing_read_ids.append(request.signal_read_id)
+                continue
+            if len(paths) == 1:
+                grouped[paths[0]].append(request)
+                continue
+
+            source_hint = request.signal_source_hint
+            if not source_hint:
+                missing_source_hint_record_keys.append(request.output_record_key)
+                continue
+            hint_basename = _source_basename(source_hint)
+            matches = tuple(
+                path for path in paths
+                if _source_basename(path) == hint_basename
+            )
+            if len(matches) != 1:
+                raise SignalSourceHintError(
+                    f"BAM fn tag {source_hint!r} cannot uniquely route signal "
+                    f"read ID {request.signal_read_id!r}; candidates: "
+                    f"{', '.join(paths)}"
+                )
+            grouped[matches[0]].append(request)
+
+        reads: dict[int | str, object] = {}
+        for path, routed_requests in grouped.items():
+            routed_ids = list(
+                dict.fromkeys(
+                    request.signal_read_id
+                    for request in routed_requests
+                )
+            )
+            found = self._get_reader(path).get_many(routed_ids)
+            for request in routed_requests:
+                signal_read = found.get(request.signal_read_id)
+                if signal_read is None:
+                    missing_record_keys.append(request.output_record_key)
+                    missing_read_ids.append(request.signal_read_id)
+                else:
+                    reads[request.output_record_key] = signal_read
+
+        return SignalLookupBatch(
+            reads=reads,
+            missing_read_ids=tuple(missing_read_ids),
+            missing_record_keys=tuple(missing_record_keys),
+            missing_source_hint_record_keys=tuple(
+                missing_source_hint_record_keys
+            ),
+        )
 
     def close(self) -> None:
         while self._readers:

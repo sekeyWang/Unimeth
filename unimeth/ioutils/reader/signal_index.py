@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
 _LOOKUP_CHUNK_SIZE = 900
 _INSERT_BATCH_SIZE = 10_000
 
@@ -115,8 +115,9 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             mtime_ns INTEGER NOT NULL
         );
         CREATE TABLE reads (
-            read_id TEXT PRIMARY KEY,
-            file_id INTEGER NOT NULL REFERENCES signal_files(file_id)
+            read_id TEXT NOT NULL,
+            file_id INTEGER NOT NULL REFERENCES signal_files(file_id),
+            PRIMARY KEY (read_id, file_id)
         ) WITHOUT ROWID;
         """
     )
@@ -197,15 +198,13 @@ def _insert_read_batch(
 
     for read_id, file_id in batch:
         existing = connection.execute(
-            "SELECT signal_files.path "
-            "FROM reads JOIN signal_files USING (file_id) "
-            "WHERE reads.read_id = ?",
-            (read_id,),
+            "SELECT 1 FROM reads WHERE read_id = ? AND file_id = ?",
+            (read_id, file_id),
         ).fetchone()
         if existing is not None:
             raise DuplicateSignalReadIdError(
-                f"Signal read ID {read_id!r} occurs more than once: "
-                f"{existing[0]} and {current_path}"
+                f"Signal read ID {read_id!r} occurs more than once in "
+                f"{current_path}"
             )
         connection.execute(
             "INSERT INTO reads(read_id, file_id) VALUES (?, ?)",
@@ -219,7 +218,7 @@ def build_signal_route_index(
     force_rebuild: bool = False,
     progress_callback: Callable[[SignalIndexProgress], None] | None = None,
 ) -> SignalIndexStats:
-    """Build a complete SQLite ``signal_read_id -> signal file`` index."""
+    """Build a complete SQLite ``signal_read_id -> signal files`` index."""
     started_at = time.monotonic()
     paths = _normalize_signal_paths(signal_paths)
     destination = Path(index_path).resolve()
@@ -243,7 +242,9 @@ def build_signal_route_index(
     connection = sqlite3.connect(str(building))
     read_count = 0
     try:
-        connection.execute("PRAGMA journal_mode = OFF")
+        # Keep rollback support for collision diagnostics without creating a
+        # disk-backed journal beside the temporary index.
+        connection.execute("PRAGMA journal_mode = MEMORY")
         connection.execute("PRAGMA synchronous = OFF")
         connection.execute("PRAGMA temp_store = MEMORY")
         _create_schema(connection)
@@ -259,6 +260,9 @@ def build_signal_route_index(
             for batch in _batched(rows, _INSERT_BATCH_SIZE):
                 _insert_read_batch(connection, batch, path)
                 read_count += len(batch)
+            # Bound the in-memory rollback journal to one signal file. A
+            # failed build is still discarded via the .building file.
+            connection.commit()
             if progress_callback is not None:
                 progress_callback(
                     SignalIndexProgress(
@@ -352,21 +356,41 @@ class SignalRouteIndex:
             )
         }
 
-    def lookup_many(self, read_ids: Iterable[str]) -> dict[str, str]:
-        """Return routes for found IDs; missing IDs are omitted."""
+    def lookup_candidates_many(
+        self,
+        read_ids: Iterable[str],
+    ) -> dict[str, tuple[str, ...]]:
+        """Return every candidate signal file for each found read ID."""
         unique_ids = tuple(dict.fromkeys(str(read_id) for read_id in read_ids))
-        found: dict[str, str] = {}
+        found: dict[str, list[str]] = {}
         for start in range(0, len(unique_ids), _LOOKUP_CHUNK_SIZE):
             chunk = unique_ids[start : start + _LOOKUP_CHUNK_SIZE]
             placeholders = ",".join("?" for _ in chunk)
             rows = self._connection.execute(
                 f"SELECT read_id, file_id FROM reads "
-                f"WHERE read_id IN ({placeholders})",
+                f"WHERE read_id IN ({placeholders}) ORDER BY file_id",
                 chunk,
             )
             for read_id, file_id in rows:
-                found[read_id] = self._file_paths[file_id]
-        return {read_id: found[read_id] for read_id in unique_ids if read_id in found}
+                found.setdefault(read_id, []).append(self._file_paths[file_id])
+        return {
+            read_id: tuple(found[read_id])
+            for read_id in unique_ids
+            if read_id in found
+        }
+
+    def lookup_many(self, read_ids: Iterable[str]) -> dict[str, str]:
+        """Return unambiguous routes for found IDs; missing IDs are omitted."""
+        candidates = self.lookup_candidates_many(read_ids)
+        routes: dict[str, str] = {}
+        for read_id, paths in candidates.items():
+            if len(paths) != 1:
+                raise DuplicateSignalReadIdError(
+                    f"Signal read ID {read_id!r} has multiple signal files; "
+                    "a BAM fn tag is required to select one"
+                )
+            routes[read_id] = paths[0]
+        return routes
 
     def close(self) -> None:
         connection = getattr(self, "_connection", None)
@@ -388,6 +412,20 @@ class SignalReadRouter:
         self.signal_paths = plan.signal_paths
         self._single_path = plan.signal_paths[0] if not plan.uses_index else None
         self._index = SignalRouteIndex(plan.index_path) if plan.uses_index else None
+
+    def lookup_candidates_many(
+        self,
+        read_ids: Iterable[str],
+    ) -> dict[str, tuple[str, ...]]:
+        unique_ids = tuple(dict.fromkeys(str(read_id) for read_id in read_ids))
+        if self._single_path is not None:
+            return {
+                read_id: (self._single_path,)
+                for read_id in unique_ids
+            }
+        if self._index is None:
+            raise RuntimeError("Signal read router is closed")
+        return self._index.lookup_candidates_many(unique_ids)
 
     def lookup_many(self, read_ids: Iterable[str]) -> dict[str, str]:
         unique_ids = tuple(dict.fromkeys(str(read_id) for read_id in read_ids))

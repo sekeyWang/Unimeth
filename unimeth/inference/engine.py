@@ -198,10 +198,12 @@ class InferenceEngine:
         if feature_stats is not None and dataset_stats is not None:
             logger.debug(
                 "Streaming features: signal_missing=%s, "
+                "signal_source_hint_missing=%s, "
                 "hard_clipped_reconciled=%s, signal_sequence_mismatch=%s, "
                 "feature_empty=%s, no_patches=%s, feature_records=%s, "
                 "yielded_patches=%s",
                 feature_stats.signal_missing_records,
+                feature_stats.signal_source_hint_missing_records,
                 feature_stats.hard_clipped_reconciled_records,
                 feature_stats.signal_sequence_mismatch_records,
                 feature_stats.feature_empty_records,

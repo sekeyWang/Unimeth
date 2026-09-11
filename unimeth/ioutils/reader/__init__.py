@@ -16,6 +16,7 @@ from .bam_stream import (
     SerializedBamStreamItem,
     calculate_alignment_identity,
     get_signal_read_id,
+    get_signal_source_hint,
     resolve_bam_mode,
     resolve_bam_mode_from_path,
 )
@@ -33,7 +34,12 @@ from .signal_index import (
     build_signal_route_index,
     prepare_signal_routing,
 )
-from .signal_lookup import SignalBatchLookup, SignalLookupBatch
+from .signal_lookup import (
+    SignalBatchLookup,
+    SignalLookupBatch,
+    SignalLookupRequest,
+    SignalSourceHintError,
+)
 from .signal import SignalReader
 from .tsv import TSVReader, PredictionRecord
 from .bed import BEDReader
@@ -52,9 +58,11 @@ __all__ = [
     'SignalIndexProgress',
     'SignalIndexStats',
     'SignalLookupBatch',
+    'SignalLookupRequest',
     'SignalReadRouter',
     'SignalRouteIndex',
     'SignalRoutingPlan',
+    'SignalSourceHintError',
     'SignalReader',
     'TSVReader',
     'BEDReader',
@@ -62,6 +70,7 @@ __all__ = [
     'calculate_alignment_identity',
     'build_signal_route_index',
     'get_signal_read_id',
+    'get_signal_source_hint',
     'prepare_signal_routing',
     'resolve_bam_mode',
     'resolve_bam_mode_from_path',

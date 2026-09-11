@@ -14,10 +14,11 @@ _CIGAR_CLIP_OPERATIONS = frozenset((4, 5))
 
 @dataclass(frozen=True)
 class BamStreamItem:
-    """One accepted BAM record and the two IDs used downstream."""
+    """One accepted BAM record and its downstream routing identifiers."""
 
     output_record_key: int
     signal_read_id: str
+    signal_source_hint: str | None
     bam_record: pysam.AlignedSegment
 
 
@@ -27,6 +28,7 @@ class SerializedBamStreamItem:
 
     output_record_key: int
     signal_read_id: str
+    signal_source_hint: str | None
     sam_record: str
 
     @classmethod
@@ -34,6 +36,7 @@ class SerializedBamStreamItem:
         return cls(
             output_record_key=item.output_record_key,
             signal_read_id=item.signal_read_id,
+            signal_source_hint=item.signal_source_hint,
             sam_record=item.bam_record.to_string(),
         )
 
@@ -41,6 +44,7 @@ class SerializedBamStreamItem:
         return BamStreamItem(
             output_record_key=self.output_record_key,
             signal_read_id=self.signal_read_id,
+            signal_source_hint=self.signal_source_hint,
             bam_record=pysam.AlignedSegment.fromstring(self.sam_record, header),
         )
 
@@ -96,6 +100,18 @@ def get_signal_read_id(bam_record: pysam.AlignedSegment) -> str:
     if query_name is None or not str(query_name):
         raise ValueError("BAM record has neither a non-empty pi tag nor a query name")
     return str(query_name)
+
+
+def get_signal_source_hint(
+    bam_record: pysam.AlignedSegment,
+) -> str | None:
+    """Return the source signal basename from the BAM fn tag when present."""
+    if not bam_record.has_tag("fn"):
+        return None
+    source = bam_record.get_tag("fn")
+    if source is None or not str(source).strip():
+        return None
+    return str(source).replace("\\", "/").rsplit("/", 1)[-1]
 
 
 def resolve_bam_mode(
@@ -241,6 +257,7 @@ class BamStreamReader:
                 item = BamStreamItem(
                     output_record_key=int(record_offset),
                     signal_read_id=get_signal_read_id(bam_record),
+                    signal_source_hint=get_signal_source_hint(bam_record),
                     bam_record=bam_record,
                 )
                 self.stats.yielded_records += 1

@@ -27,6 +27,7 @@ class BamFeatureWorkerStats:
 
     lookup_batches: int = 0
     signal_missing_records: int = 0
+    signal_source_hint_missing_records: int = 0
     hard_clipped_reconciled_records: int = 0
     signal_sequence_mismatch_records: int = 0
     feature_empty_records: int = 0
