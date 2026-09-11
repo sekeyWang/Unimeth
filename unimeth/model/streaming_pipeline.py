@@ -1,29 +1,15 @@
-"""Bounded thread pipeline used by BAM-primary streaming inference."""
+"""Producer and worker utilities for BAM-primary streaming inference."""
 
 from __future__ import annotations
 
-import time
 import traceback
 from dataclasses import dataclass, fields
-from queue import Empty, Full, Queue
-from threading import Event, Lock, Thread
-from typing import Any, Callable, Iterable, Protocol
+from queue import Empty, Full
+from threading import Event, Thread
+from typing import Any, Callable, Iterable
 
 
-class BatchProcessor(Protocol):
-    """Worker-local processor created and closed inside its worker thread."""
-
-    def process(self, batch: list[Any]) -> Any: ...
-
-    def close(self) -> None: ...
-
-
-@dataclass(frozen=True)
-class WorkerSummary:
-    """Final state returned by one worker after its processor is closed."""
-
-    worker_id: int
-    stats: Any
+_QUEUE_POLL_SECONDS = 0.1
 
 
 @dataclass(frozen=True)
@@ -37,7 +23,7 @@ class RecordPatchBundle:
 
 @dataclass
 class BamFeatureWorkerStats:
-    """Feature-stage counters accumulated by one or more worker threads."""
+    """Feature-stage counters accumulated by a worker process."""
 
     lookup_batches: int = 0
     signal_missing_records: int = 0
@@ -130,244 +116,142 @@ class BamFeatureBatchProcessor:
         self.signal_lookup.close()
 
 
-def merge_feature_worker_stats(
-    summaries: Iterable[WorkerSummary],
-) -> BamFeatureWorkerStats:
-    """Combine feature counters returned by completed worker threads."""
-    combined = BamFeatureWorkerStats()
-    for summary in summaries:
-        combined.add(summary.stats)
-    return combined
+class PipelineShutdownError(RuntimeError):
+    """A streaming background component did not stop in time."""
 
 
 @dataclass(frozen=True)
-class _BatchResult:
-    value: Any
+class RecordStreamEnd:
+    """One producer end marker consumed by one DataLoader worker."""
 
 
 @dataclass(frozen=True)
-class _WorkerDone:
-    summary: WorkerSummary
+class RecordStreamFailure:
+    """A producer exception forwarded through the shared record queue."""
 
-
-@dataclass(frozen=True)
-class _PipelineFailure:
-    stage: str
-    worker_id: int | None
-    error: BaseException
+    error_type: str
+    message: str
     traceback_text: str
 
 
-class PipelineExecutionError(RuntimeError):
-    """An exception raised by the BAM producer or a feature worker."""
+class RecordProducerError(RuntimeError):
+    """Raised in a DataLoader worker when sequential BAM production fails."""
 
-    def __init__(self, failure: _PipelineFailure):
-        location = failure.stage
-        if failure.worker_id is not None:
-            location += f" {failure.worker_id}"
-        super().__init__(f"Streaming {location} failed: {failure.error}")
-        self.stage = failure.stage
-        self.worker_id = failure.worker_id
-        self.original_exception = failure.error
-        self.worker_traceback = failure.traceback_text
+    def __init__(self, failure: RecordStreamFailure):
+        super().__init__(
+            f"BAM producer failed with {failure.error_type}: {failure.message}"
+        )
+        self.failure = failure
 
 
-class PipelineShutdownError(RuntimeError):
-    """The streaming pipeline did not stop all of its threads in time."""
+def iter_record_batches(record_queue, stop_event=None):
+    """Yield producer batches until this consumer receives its end marker."""
+    while stop_event is None or not stop_event.is_set():
+        try:
+            message = record_queue.get(timeout=_QUEUE_POLL_SECONDS)
+        except Empty:
+            continue
+        if isinstance(message, RecordStreamEnd):
+            return
+        if isinstance(message, RecordStreamFailure):
+            raise RecordProducerError(message)
+        yield message
 
 
-_TASK_STOP = object()
-_QUEUE_POLL_SECONDS = 0.1
-
-
-class ThreadedBatchPipeline:
-    """Feed source batches to worker-local processors through bounded queues."""
+class RecordBatchProducer:
+    """Serialize one sequential source into bounded batches for worker processes."""
 
     def __init__(
         self,
-        source: Iterable[Any],
-        worker_factory: Callable[[int], BatchProcessor],
-        num_workers: int,
+        source_factory: Callable[[], Iterable[Any]],
+        serializer: Callable[[Any], Any],
+        record_queue,
+        num_consumers: int,
         batch_size: int,
-        queue_size: int,
         shutdown_timeout: float = 30.0,
     ):
-        if num_workers < 1:
-            raise ValueError("num_workers must be >= 1")
+        if num_consumers < 1:
+            raise ValueError("num_consumers must be >= 1")
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
-        if queue_size < 1:
-            raise ValueError("queue_size must be >= 1")
         if shutdown_timeout <= 0:
             raise ValueError("shutdown_timeout must be > 0")
 
-        self.source = source
-        self.worker_factory = worker_factory
-        self.num_workers = num_workers
+        self.source_factory = source_factory
+        self.serializer = serializer
+        self.record_queue = record_queue
+        self.num_consumers = num_consumers
         self.batch_size = batch_size
         self.shutdown_timeout = shutdown_timeout
-        self.task_queue: Queue = Queue(maxsize=queue_size)
-        self.result_queue: Queue = Queue(maxsize=queue_size)
         self.stop_event = Event()
-        self.worker_summaries: list[WorkerSummary] = []
-        self._threads: list[Thread] = []
-        self._started = False
-        self._failure: _PipelineFailure | None = None
-        self._failure_lock = Lock()
-        self._close_lock = Lock()
-        self.alive_thread_names: tuple[str, ...] = ()
+        self.source_stats = None
+        self.failure: RecordStreamFailure | None = None
+        self._thread: Thread | None = None
 
-    def _record_failure(
-        self,
-        stage: str,
-        error: BaseException,
-        worker_id: int | None = None,
-    ) -> None:
-        failure = _PipelineFailure(
-            stage=stage,
-            worker_id=worker_id,
-            error=error,
-            traceback_text=traceback.format_exc(),
-        )
-        with self._failure_lock:
-            if self._failure is None:
-                self._failure = failure
-        self.stop_event.set()
-
-    def _put_while_running(self, queue: Queue, item: Any) -> bool:
+    def _put(self, item: Any) -> bool:
         while not self.stop_event.is_set():
             try:
-                queue.put(item, timeout=_QUEUE_POLL_SECONDS)
+                self.record_queue.put(item, timeout=_QUEUE_POLL_SECONDS)
                 return True
             except Full:
                 continue
         return False
 
-    def _get_task(self):
-        while not self.stop_event.is_set():
-            try:
-                return self.task_queue.get(timeout=_QUEUE_POLL_SECONDS)
-            except Empty:
-                continue
-        return _TASK_STOP
+    def _put_terminal_messages(self, message: Any) -> None:
+        for _ in range(self.num_consumers):
+            if not self._put(message):
+                return
 
-    def _produce(self) -> None:
+    def _run(self) -> None:
+        source = None
+        source_iterator = None
         try:
+            source = self.source_factory()
+            source_iterator = iter(source)
             batch = []
-            for item in self.source:
+            for item in source_iterator:
                 if self.stop_event.is_set():
-                    break
-                batch.append(item)
+                    return
+                batch.append(self.serializer(item))
                 if len(batch) >= self.batch_size:
-                    if not self._put_while_running(self.task_queue, batch):
+                    if not self._put(tuple(batch)):
                         return
                     batch = []
-            if batch and not self._put_while_running(self.task_queue, batch):
+            if batch and not self._put(tuple(batch)):
                 return
-            for _ in range(self.num_workers):
-                if not self._put_while_running(self.task_queue, _TASK_STOP):
-                    return
+            self._put_terminal_messages(RecordStreamEnd())
         except BaseException as error:
-            self._record_failure("BAM producer", error)
-
-    def _work(self, worker_id: int) -> None:
-        processor = None
-        worker_failed = False
-        try:
-            processor = self.worker_factory(worker_id)
-            while not self.stop_event.is_set():
-                batch = self._get_task()
-                if batch is _TASK_STOP:
-                    break
-                result = processor.process(batch)
-                if not self._put_while_running(
-                    self.result_queue,
-                    _BatchResult(result),
-                ):
-                    return
-        except BaseException as error:
-            worker_failed = True
-            self._record_failure("feature worker", error, worker_id)
+            failure = RecordStreamFailure(
+                error_type=type(error).__name__,
+                message=str(error),
+                traceback_text=traceback.format_exc(),
+            )
+            self.failure = failure
+            self._put_terminal_messages(failure)
         finally:
-            if processor is not None:
-                try:
-                    processor.close()
-                except BaseException as error:
-                    worker_failed = True
-                    self._record_failure(
-                        "feature worker close",
-                        error,
-                        worker_id,
-                    )
-            if not worker_failed and not self.stop_event.is_set():
-                self._put_while_running(
-                    self.result_queue,
-                    _WorkerDone(
-                        WorkerSummary(
-                            worker_id=worker_id,
-                            stats=getattr(processor, "stats", None),
-                        )
-                    ),
-                )
+            if source is not None:
+                self.source_stats = getattr(source, "stats", None)
+            close_iterator = getattr(source_iterator, "close", None)
+            if close_iterator is not None:
+                close_iterator()
 
     def start(self) -> None:
-        if self._started:
+        if self._thread is not None:
             return
-        self._started = True
-        producer = Thread(
-            target=self._produce,
+        self._thread = Thread(
+            target=self._run,
             name="unimeth-bam-producer",
             daemon=True,
         )
-        self._threads.append(producer)
-        for worker_id in range(self.num_workers):
-            self._threads.append(
-                Thread(
-                    target=self._work,
-                    args=(worker_id,),
-                    name=f"unimeth-feature-{worker_id}",
-                    daemon=True,
-                )
-            )
-        for thread in self._threads:
-            thread.start()
+        self._thread.start()
 
-    def __iter__(self):
-        self.start()
-        workers_done = 0
-        pipeline_failed = False
-        try:
-            while workers_done < self.num_workers:
-                if self._failure is not None:
-                    pipeline_failed = True
-                    raise PipelineExecutionError(self._failure) from self._failure.error
-                try:
-                    message = self.result_queue.get(
-                        timeout=_QUEUE_POLL_SECONDS
-                    )
-                except Empty:
-                    continue
-                if isinstance(message, _BatchResult):
-                    yield message.value
-                elif isinstance(message, _WorkerDone):
-                    self.worker_summaries.append(message.summary)
-                    workers_done += 1
-        finally:
-            self.close(raise_on_timeout=not pipeline_failed)
-
-    def close(self, raise_on_timeout: bool = True) -> None:
+    def close(self) -> None:
         self.stop_event.set()
-        with self._close_lock:
-            deadline = time.monotonic() + self.shutdown_timeout
-            for thread in self._threads:
-                remaining = max(0.0, deadline - time.monotonic())
-                thread.join(timeout=remaining)
-            self.alive_thread_names = tuple(
-                thread.name for thread in self._threads if thread.is_alive()
-            )
-        if self.alive_thread_names and raise_on_timeout:
-            names = ", ".join(self.alive_thread_names)
+        if self._thread is None:
+            return
+        self._thread.join(timeout=self.shutdown_timeout)
+        if self._thread.is_alive():
             raise PipelineShutdownError(
-                f"Streaming pipeline threads did not stop within "
-                f"{self.shutdown_timeout:.1f}s: {names}"
+                "BAM producer did not stop within "
+                f"{self.shutdown_timeout:.1f}s"
             )

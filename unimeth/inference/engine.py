@@ -36,9 +36,6 @@ from unimeth.ioutils.writer.bam_finalize import (
     normalize_bam_path,
     select_latest_bam_records,
 )
-from unimeth.inference.coordination import (
-    CompletionCoordinator,
-)
 from unimeth.inference.resume import (
     GracefulStopRequested,
     GracefulStopper,
@@ -96,7 +93,11 @@ class InferenceEngine:
             args=self.args
         )
         
-        num_workers = 0 if self._streaming_enabled else getattr(self.args, 'num_workers', 2)
+        num_workers = int(getattr(self.args, 'num_workers', 2) or 0)
+        if num_workers < 0:
+            raise ValueError("num_workers must be >= 0")
+        if self._streaming_enabled and num_workers > 0:
+            self.dataset.configure_parallel_workers(num_workers)
         import functools
         total_stride = get_total_stride(getattr(self.args, 'model_type', 'default'))
         collate_fn_with_stride = functools.partial(collate_fn, 'inference', total_stride=total_stride)
@@ -175,12 +176,12 @@ class InferenceEngine:
 
         bam_stats = getattr(self.dataset, 'bam_stats', None)
         if bam_stats is not None:
-            logger.info(
+            logger.debug(
                 "BAM records: total=%s, passed=%s",
                 bam_stats.total_records,
                 bam_stats.yielded_records,
             )
-            logger.info(
+            logger.debug(
                 "BAM filters: unmapped=%s, secondary=%s, duplicate=%s, "
                 "supplementary=%s, mapq=%s, identity=%s, chromosome=%s",
                 bam_stats.filtered_unmapped,
@@ -195,7 +196,7 @@ class InferenceEngine:
         feature_stats = getattr(self.dataset, 'feature_stats', None)
         dataset_stats = getattr(self.dataset, 'stats', None)
         if feature_stats is not None and dataset_stats is not None:
-            logger.info(
+            logger.debug(
                 "Streaming features: signal_missing=%s, "
                 "hard_clipped_reconciled=%s, signal_sequence_mismatch=%s, "
                 "feature_empty=%s, no_patches=%s, feature_records=%s, "
@@ -210,7 +211,7 @@ class InferenceEngine:
             )
 
         if bam_writer is not None:
-            logger.info(
+            logger.debug(
                 "Streaming output: records_written=%s",
                 bam_writer.stats.get('records_written', 0),
             )
@@ -288,15 +289,12 @@ class InferenceEngine:
 
             self.dataset_class = BamStreamingDataset
             self._prepare_signal_routing(output_format)
-            logger.info("Input pipeline: BAM-primary streaming (single rank, no resume)")
+            logger.debug("Input pipeline: BAM-primary streaming (single rank, no resume)")
             return
 
         self.dataset_class = self._legacy_dataset_class
         self._prepare_bam_index(output_format)
-        if getattr(self.args, 'resume', False):
-            logger.info("Input pipeline: legacy signal-first (--resume enabled)")
-        else:
-            logger.info("Input pipeline: legacy signal-first (multi-rank run)")
+        logger.info("Input pipeline: legacy signal-first (--resume enabled)")
 
     def _wait_for_bam_index(self, bam_path: str, index_file: str):
         """Wait for the main process to finish writing the BAM index."""
@@ -380,6 +378,17 @@ class InferenceEngine:
         if callable(close_dataset):
             close_dataset()
 
+    @staticmethod
+    def _shutdown_dataloader_iterator(dataloader_iterator) -> None:
+        """Stop DataLoader workers when inference exits before exhaustion."""
+        shutdown_workers = getattr(
+            dataloader_iterator,
+            '_shutdown_workers',
+            None,
+        )
+        if callable(shutdown_workers):
+            shutdown_workers()
+
     def run(self, output_format: str = 'bam'):
         run_failed = False
         try:
@@ -412,13 +421,12 @@ class InferenceEngine:
 
         is_main = self.accelerator.is_main_process
         rank = self.accelerator.process_index
-        completion_coordinator = CompletionCoordinator.start(
-            output_path=self._get_resume_output_path(output_format),
-            rank=rank,
-            num_processes=self.accelerator.num_processes,
-            is_main_process=is_main,
-            startup_barrier=self.accelerator.wait_for_everyone,
-        )
+        if self.accelerator.num_processes != 1:
+            raise RuntimeError(
+                "BAM-primary streaming currently supports one inference "
+                "process; multi-process inference will be implemented "
+                "separately"
+            )
         resume_checkpoint = resume_tracker = None
         resume_part_suffix = None
 
@@ -490,6 +498,7 @@ class InferenceEngine:
         writers = [w for w in (tsv_writer, bam_writer) if w is not None]
 
         graceful_stop_requested = False
+        dataloader_iterator = None
         with GracefulStopper(enabled=resume_checkpoint is not None) as graceful_stopper:
             try:
                 with contextlib.ExitStack() as stack:
@@ -500,7 +509,10 @@ class InferenceEngine:
 
                     try:
                         with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                            batch_iter = enumerate(self.dataloader)
+                            dataloader_iterator = iter(self.dataloader)
+                            if self._streaming_enabled:
+                                self.dataset.start_producer()
+                            batch_iter = enumerate(dataloader_iterator)
                             while True:
                                 graceful_stopper.raise_if_requested()
                                 wait_start = time.perf_counter()
@@ -612,9 +624,15 @@ class InferenceEngine:
                         try:
                             self._close_dataset()
                         finally:
-                            if bam_writer is not None:
-                                bam_writer.on_reads_complete()
-                            record_completed_bam_reads()
+                            try:
+                                if dataloader_iterator is not None:
+                                    self._shutdown_dataloader_iterator(
+                                        dataloader_iterator
+                                    )
+                            finally:
+                                if bam_writer is not None:
+                                    bam_writer.on_reads_complete()
+                                record_completed_bam_reads()
             except GracefulStopRequested as stop:
                 graceful_stop_requested = True
                 if is_main:
@@ -623,26 +641,12 @@ class InferenceEngine:
         if graceful_stop_requested:
             return
 
-        # Finalize
-        # Every rank has closed its writer. This filesystem protocol permits an
-        # early rank to wait for a slow tail without the NCCL watchdog timeout.
+        # Finalize directly: the current BAM-primary implementation is single-process.
         incomplete_read_count = (
             bam_writer.stats["reads_flushed_incomplete"]
             if bam_writer is not None
             else 0
         )
-        completion_coordinator.mark_rank_complete(
-            incomplete_read_count=incomplete_read_count,
-        )
-
-        if not is_main:
-            completion_coordinator.wait_for_finalization()
-            completion_coordinator.acknowledge_finalization()
-            return
-
-        logger.info("Waiting for all ranks to finish writing their output parts...")
-        completion_coordinator.wait_for_all()
-        incomplete_read_count = completion_coordinator.incomplete_read_count()
         inference_time = time.perf_counter() - inference_start
         logger.info(
             "Inference complete: %s batches, %s samples, %.1fs",
@@ -655,8 +659,8 @@ class InferenceEngine:
         if total_batches > 0:
             times['preload'] = [0, Preload]
             times['warmup'] = [0, Warmup]
-            logger.info("%s", '=' * 60)
-            logger.info("Per-batch timing breakdown:")
+            logger.debug("%s", '=' * 60)
+            logger.debug("Per-batch timing breakdown:")
             cover = 0
             for name, vals in times.items():
                 vals = vals[1:]
@@ -664,7 +668,7 @@ class InferenceEngine:
                     continue
                 avg_ms = sum(vals) / len(vals) * 1000
                 total_pct = sum(vals) / inference_time * 100
-                logger.info(
+                logger.debug(
                     "  %s: %10.2f ms/batch (%7.2f/%7.2f=%5.1f%% total)",
                     f"{name:10s}",
                     avg_ms,
@@ -673,14 +677,14 @@ class InferenceEngine:
                     total_pct,
                 )
                 cover += sum(vals)
-            logger.info(
+            logger.debug(
                 "  %-10s: %10.2f/%7.2f=%5.1f%% total",
                 'Cover',
                 cover,
                 inference_time,
                 100 * cover / inference_time,
             )
-            logger.info("%s", '=' * 60)
+            logger.debug("%s", '=' * 60)
 
         has_incomplete_reads = incomplete_read_count > 0
         finalize_ok = True
@@ -704,7 +708,10 @@ class InferenceEngine:
                         finalize_ok = False
                         logger.warning("No BAM records were available to finalize")
                     else:
-                        logger.info("Merging %s rank BAM(s)...", len(selected_part_files))
+                        logger.debug(
+                            "Finalizing %s BAM part(s)",
+                            len(selected_part_files),
+                        )
                         try:
                             sort_and_index = bam_has_references(self.args.bam_dir)
                             finalize_part_bams(
@@ -743,14 +750,7 @@ class InferenceEngine:
             if resume_checkpoint is not None and finalize_ok:
                 resume_checkpoint.cleanup()
         except Exception:
-            finalize_ok = False
             raise
-        finally:
-            completion_coordinator.mark_finalized(finalize_ok)
-
-        if finalize_ok:
-            completion_coordinator.wait_for_finalization_acknowledgements()
-            completion_coordinator.cleanup()
     
     # Backward compatibility alias
     def run_bam(self):

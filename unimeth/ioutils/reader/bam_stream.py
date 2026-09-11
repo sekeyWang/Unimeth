@@ -21,6 +21,30 @@ class BamStreamItem:
     bam_record: pysam.AlignedSegment
 
 
+@dataclass(frozen=True)
+class SerializedBamStreamItem:
+    """Pickle-safe BAM item passed from the reader to DataLoader workers."""
+
+    output_record_key: int
+    signal_read_id: str
+    sam_record: str
+
+    @classmethod
+    def from_item(cls, item: BamStreamItem) -> "SerializedBamStreamItem":
+        return cls(
+            output_record_key=item.output_record_key,
+            signal_read_id=item.signal_read_id,
+            sam_record=item.bam_record.to_string(),
+        )
+
+    def restore(self, header) -> BamStreamItem:
+        return BamStreamItem(
+            output_record_key=self.output_record_key,
+            signal_read_id=self.signal_read_id,
+            bam_record=pysam.AlignedSegment.fromstring(self.sam_record, header),
+        )
+
+
 @dataclass
 class BamStreamStats:
     """Mutually exclusive BAM filtering counters for one sequential pass."""

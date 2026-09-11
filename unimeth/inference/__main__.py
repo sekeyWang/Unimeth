@@ -90,8 +90,11 @@ def format_inference_args(args):
         ],
         'Processing': [
             ('Batch Size', args.batch_size),
-            ('Feature Workers', f'{args.num_workers} threads'),
-            ('DataLoader Workers', '0 in BAM streaming'),
+            (
+                'Workers',
+                f'{args.num_workers} processes'
+                if args.num_workers else 'main process',
+            ),
             ('Use Binning', 'yes' if args.use_binning else 'no'),
             *([('Max Bin Length', args.max_bin_length)] if args.use_binning else []),
         ],
@@ -100,7 +103,7 @@ def format_inference_args(args):
             ('Chromosomes', args.chr),
             ('MAPQ >=', args.mapq_thres),
             ('Identity >=', args.identity_thres),
-            ('Skip Unmapped', 'yes' if args.skip_unmapped else 'no'),
+            ('Unmapped', 'skip' if args.skip_unmapped else 'keep'),
             ('Supplementary', 'keep' if args.include_supplementary else 'skip'),
         ],
     }
