@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,10 +14,15 @@ from typing import Callable, Iterable, Iterator
 _SCHEMA_VERSION = "2"
 _LOOKUP_CHUNK_SIZE = 900
 _INSERT_BATCH_SIZE = 10_000
+_DEFAULT_INDEX_NAME = ".unimeth-signal-index.sqlite"
 
 
 class DuplicateSignalReadIdError(RuntimeError):
     """Raised when one signal read ID cannot be routed unambiguously."""
+
+
+class SignalIndexWriteError(RuntimeError):
+    """Raised before signal scanning when an index cannot be created."""
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,26 @@ class SignalRoutingPlan:
         return SignalReadRouter(self)
 
 
+def resolve_signal_index_path(
+    signal_input: str | os.PathLike[str],
+    index_path: str | os.PathLike[str] | None = None,
+) -> str:
+    """Resolve an explicit index path or the signal-directory sidecar."""
+    if index_path is not None:
+        resolved = Path(index_path).expanduser().resolve()
+    else:
+        signal_path = Path(signal_input).expanduser().resolve()
+        if signal_path.is_dir():
+            resolved = signal_path / _DEFAULT_INDEX_NAME
+        else:
+            resolved = signal_path.with_name(
+                f".{signal_path.name}.unimeth-signal-index.sqlite"
+            )
+    if resolved.exists() and resolved.is_dir():
+        raise ValueError(f"Signal index path must be a file: {resolved}")
+    return str(resolved)
+
+
 def iter_signal_read_ids(signal_path: str | os.PathLike[str]) -> Iterator[str]:
     """Yield all read IDs from one POD5/SLOW5/BLOW5 file."""
     from unimeth.ioutils.reader.raw_signal import is_pod5_path, is_slow5_path
@@ -91,7 +117,7 @@ def iter_signal_read_ids(signal_path: str | os.PathLike[str]) -> Iterator[str]:
 def _normalize_signal_paths(
     signal_paths: Iterable[str | os.PathLike[str]],
 ) -> tuple[Path, ...]:
-    paths = tuple(Path(path).resolve() for path in signal_paths)
+    paths = tuple(sorted(Path(path).expanduser().resolve() for path in signal_paths))
     if not paths:
         raise ValueError("at least one signal file is required")
     for path in paths:
@@ -129,6 +155,16 @@ def _open_read_only(index_path: Path) -> sqlite3.Connection:
     return connection
 
 
+def _remove_building_index(building: Path | None) -> None:
+    """Best-effort cleanup that preserves the original build error."""
+    if building is None:
+        return
+    try:
+        building.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _matching_index_counts(
     index_path: Path,
     signal_paths: tuple[Path, ...],
@@ -154,10 +190,14 @@ def _matching_index_counts(
     except (OSError, sqlite3.DatabaseError, ValueError):
         return None
 
-    current_files = tuple(
-        (str(path), path.stat().st_size, path.stat().st_mtime_ns)
-        for path in signal_paths
-    )
+    try:
+        current_files = []
+        for path in signal_paths:
+            stat = path.stat()
+            current_files.append((str(path), stat.st_size, stat.st_mtime_ns))
+        current_files = tuple(current_files)
+    except OSError:
+        return None
     if stored_files != current_files:
         return None
     try:
@@ -212,6 +252,41 @@ def _insert_read_batch(
         )
 
 
+def _open_building_index(
+    destination: Path,
+) -> tuple[Path, sqlite3.Connection]:
+    """Reserve a unique writable build file before scanning signal IDs."""
+    if destination.exists() and not destination.is_file():
+        raise SignalIndexWriteError(
+            f"Signal index path must be a file: {destination}"
+        )
+
+    building: Path | None = None
+    descriptor: int | None = None
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, building_name = tempfile.mkstemp(
+            prefix=f"{destination.name}.building.",
+            dir=destination.parent,
+        )
+        building = Path(building_name)
+        os.close(descriptor)
+        descriptor = None
+        connection = sqlite3.connect(str(building))
+    except (OSError, sqlite3.Error) as exc:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        _remove_building_index(building)
+        raise SignalIndexWriteError(
+            "Target directory is not writable:\n"
+            f"  {destination.parent}"
+        ) from exc
+    return building, connection
+
+
 def build_signal_route_index(
     signal_paths: Iterable[str | os.PathLike[str]],
     index_path: str | os.PathLike[str],
@@ -234,12 +309,7 @@ def build_signal_route_index(
                 reused=True,
             )
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    building = destination.with_name(f"{destination.name}.building")
-    if building.exists():
-        building.unlink()
-
-    connection = sqlite3.connect(str(building))
+    building, connection = _open_building_index(destination)
     read_count = 0
     try:
         # Keep rollback support for collision diagnostics without creating a
@@ -248,6 +318,16 @@ def build_signal_route_index(
         connection.execute("PRAGMA synchronous = OFF")
         connection.execute("PRAGMA temp_store = MEMORY")
         _create_schema(connection)
+        if progress_callback is not None:
+            progress_callback(
+                SignalIndexProgress(
+                    files_completed=0,
+                    file_count=len(paths),
+                    read_count=0,
+                    current_path=str(paths[0]),
+                    elapsed_seconds=time.monotonic() - started_at,
+                )
+            )
 
         for file_id, path in enumerate(paths, start=1):
             stat = path.stat()
@@ -287,13 +367,19 @@ def build_signal_route_index(
         connection.commit()
     except Exception:
         connection.close()
-        if building.exists():
-            building.unlink()
+        _remove_building_index(building)
         raise
     else:
         connection.close()
 
-    os.replace(building, destination)
+    try:
+        os.replace(building, destination)
+    except OSError as exc:
+        _remove_building_index(building)
+        raise SignalIndexWriteError(
+            "Cannot install the completed index at:\n"
+            f"  {destination}"
+        ) from exc
     return SignalIndexStats(
         index_path=str(destination),
         file_count=len(paths),

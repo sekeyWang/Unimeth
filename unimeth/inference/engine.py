@@ -265,21 +265,26 @@ class InferenceEngine:
 
         raise ValueError("--resume requires an output path")
 
-    def _prepare_signal_routing(self, output_format: str):
+    def _prepare_signal_routing(self):
         """Prepare the single-rank signal router without building a BAM ID index."""
         from unimeth.ioutils.reader.bam_stream import resolve_bam_mode_from_path
         from unimeth.ioutils.reader.raw_signal import collect_signal_paths
-        from unimeth.ioutils.reader.signal_index import prepare_signal_routing
+        from unimeth.ioutils.reader.signal_index import (
+            prepare_signal_routing,
+            resolve_signal_index_path,
+        )
 
         signal_paths = collect_signal_paths(
             self.args.signal_dir,
             suffixes=getattr(self.args, 'signal_suffixes', None),
             label=getattr(self.args, 'signal_label', None),
         )
-        output_path = os.path.abspath(str(self._get_resume_output_path(output_format)))
-        index_path = f"{output_path}.signal-index.sqlite"
-        plan = prepare_signal_routing(signal_paths, index_path=index_path)
-        self.args.signal_routing_plan = plan
+        index_path = None
+        if len(signal_paths) > 1:
+            index_path = resolve_signal_index_path(
+                self.args.signal_dir,
+                getattr(self.args, 'signal_index', None),
+            )
 
         requested_mode = getattr(self.args, 'bam_mode', 'auto')
         resolved_mode, auto_detected = resolve_bam_mode_from_path(
@@ -291,12 +296,27 @@ class InferenceEngine:
         source = "auto-detected" if auto_detected else "configured"
         logger.info("BAM mode: %s (%s)", resolved_mode, source)
 
+        def log_index_progress(progress):
+            if progress.files_completed == 0:
+                logger.info(
+                    "Building signal route index for %s signal files...",
+                    f"{progress.file_count:,}",
+                )
+
+        plan = prepare_signal_routing(
+            signal_paths,
+            index_path=index_path,
+            progress_callback=log_index_progress,
+        )
+        self.args.signal_routing_plan = plan
+
         if plan.uses_index:
             stats = plan.index_stats
             action = "reused" if stats.reused else "built"
             logger.info(
-                "Signal route index %s: %s read(s) across %s file(s) in %.2fs",
+                "Signal route index %s: %s (%s read(s) across %s file(s) in %.2fs)",
                 action,
+                stats.index_path,
                 f"{stats.read_count:,}",
                 f"{stats.file_count:,}",
                 stats.elapsed_seconds,
@@ -311,7 +331,7 @@ class InferenceEngine:
             from unimeth.model.streaming_dataset import BamStreamingDataset
 
             self.dataset_class = BamStreamingDataset
-            self._prepare_signal_routing(output_format)
+            self._prepare_signal_routing()
             logger.debug("Input pipeline: BAM-primary streaming (single rank, no resume)")
             return
 

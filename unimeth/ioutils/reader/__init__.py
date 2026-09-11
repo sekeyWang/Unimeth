@@ -28,11 +28,13 @@ from .signal_index import (
     DuplicateSignalReadIdError,
     SignalIndexProgress,
     SignalIndexStats,
+    SignalIndexWriteError,
     SignalReadRouter,
     SignalRouteIndex,
     SignalRoutingPlan,
     build_signal_route_index,
     prepare_signal_routing,
+    resolve_signal_index_path,
 )
 from .signal_lookup import (
     SignalBatchLookup,
@@ -57,6 +59,7 @@ __all__ = [
     'SignalBatchLookup',
     'SignalIndexProgress',
     'SignalIndexStats',
+    'SignalIndexWriteError',
     'SignalLookupBatch',
     'SignalLookupRequest',
     'SignalReadRouter',
@@ -72,6 +75,7 @@ __all__ = [
     'get_signal_read_id',
     'get_signal_source_hint',
     'prepare_signal_routing',
+    'resolve_signal_index_path',
     'resolve_bam_mode',
     'resolve_bam_mode_from_path',
 ]

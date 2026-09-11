@@ -171,6 +171,8 @@ Model Types:
                            help='Keep mv tag in output modBAM (default: remove mv tag)')
         parser.add_argument('--show_reading_progress', action='store_true',
                            help='Show tqdm progress bar for data reading (default: disabled for clean output)')
+        parser.add_argument('--signal_index', type=str, default=None,
+                           help='Signal route index path (default: .unimeth-signal-index.sqlite in a multi-file signal directory)')
         # BAM output: read-level flush control
         # The Dataset flushes bins every N reads and signals the BAM writer via __reads_complete__ markers.
         # This ensures all patches for a batch of reads are collected before writing to BAM.

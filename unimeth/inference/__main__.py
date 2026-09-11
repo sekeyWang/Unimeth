@@ -189,9 +189,20 @@ def main():
 
     from unimeth.model.datasets import Pod5BamDataset
     from unimeth.inference.engine import InferenceEngine
+    from unimeth.ioutils.reader.signal_index import SignalIndexWriteError
 
     engine = InferenceEngine(args, Pod5BamDataset)
-    engine.run(output_format=args.output_format)
+    try:
+        engine.run(output_format=args.output_format)
+    except SignalIndexWriteError as exc:
+        logger.error(
+            "\nCannot create the signal route index.\n\n"
+            "%s\n\n"
+            "Specify a writable index location and run again:\n"
+            "  --signal_index /path/to/unimeth-signal-index.sqlite",
+            exc,
+        )
+        raise SystemExit(1) from None
 
 
 if __name__ == '__main__':
