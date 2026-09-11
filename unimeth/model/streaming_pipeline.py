@@ -18,7 +18,7 @@ class RecordPatchBundle:
 
     output_record_key: int | str
     signal_read_id: str
-    patches: tuple[dict, ...]
+    patches: Iterable[dict]
 
 
 @dataclass
@@ -93,24 +93,23 @@ class BamFeatureBatchProcessor:
                     close_router()
             raise
 
-    def process(self, bam_batch: list[Any]) -> tuple[RecordPatchBundle, ...]:
+    def process(self, bam_batch: list[Any]) -> Iterable[RecordPatchBundle]:
+        """Yield each record bundle without materializing the full lookup batch."""
         feature_stream = self.feature_stream_factory(
             bam_batch,
             self.signal_lookup,
             self.extractor,
             batch_size=len(bam_batch),
         )
-        bundles = []
-        for feature in feature_stream:
-            bundles.append(
-                RecordPatchBundle(
+        try:
+            for feature in feature_stream:
+                yield RecordPatchBundle(
                     output_record_key=feature["output_record_key"],
                     signal_read_id=feature["signal_read_id"],
-                    patches=tuple(self.dataset_factory(feature, self.args)),
+                    patches=self.dataset_factory(feature, self.args),
                 )
-            )
-        self.stats.add(feature_stream.stats)
-        return tuple(bundles)
+        finally:
+            self.stats.add(feature_stream.stats)
 
     def close(self) -> None:
         self.signal_lookup.close()

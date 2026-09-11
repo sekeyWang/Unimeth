@@ -25,6 +25,7 @@ from unimeth.ioutils.reader.bam import BamReader
 from unimeth.utils.bam_tags import write_mm_ml_tags
 
 logger = logging.getLogger(__name__)
+_INCOMPLETE_READ_DEBUG_LIMIT = 10
 
 
 @dataclass
@@ -341,19 +342,32 @@ class AggregationBAMWriter:
         # Preserve a partial record for callers that prefer breadth of output over
         # complete per-read calls. It deliberately remains out of the checkpoint
         # so a later resume can replace it with a complete record.
+        incomplete_count = 0
         for record_key in list(self.buffer.keys()):
             buf = self.buffer[record_key]
             if not buf.is_complete:
-                logger.warning(
-                    f"At close, read {buf.read_id} incomplete: "
-                    f"{len(buf.received)}/{buf.expected}; writing partial MM/ML tags"
-                )
+                incomplete_count += 1
+                if incomplete_count <= _INCOMPLETE_READ_DEBUG_LIMIT:
+                    logger.debug(
+                        "At close, read %s incomplete: %s/%s; "
+                        "writing partial MM/ML tags",
+                        buf.read_id,
+                        len(buf.received),
+                        buf.expected,
+                    )
                 self.stats['reads_flushed_incomplete'] += 1
                 self._write_read_to_bam(buf)
             else:
                 self._write_read_to_bam(buf)
                 self.stats['reads_completed'] += 1
                 self._completed_read_ids.append(buf.read_id)
+
+        omitted_count = incomplete_count - _INCOMPLETE_READ_DEBUG_LIMIT
+        if omitted_count > 0:
+            logger.debug(
+                "%s additional incomplete read(s) omitted from per-read DEBUG output",
+                omitted_count,
+            )
         
         self.buffer.clear()
         self.output_bam.close()

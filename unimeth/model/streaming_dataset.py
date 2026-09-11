@@ -134,7 +134,7 @@ class BamStreamingDataset(IterableDataset):
             serializer=SerializedBamStreamItem.from_item,
             record_queue=self._record_queue,
             num_consumers=self._parallel_workers,
-            batch_size=getattr(self.args, "signal_lookup_batch_size", 256),
+            batch_size=getattr(self.args, "signal_lookup_batch_size", 8),
         )
         self._producer.start()
 
@@ -165,7 +165,7 @@ class BamStreamingDataset(IterableDataset):
                 signal_lookup,
                 extractor,
                 batch_size=getattr(
-                    self.args, "signal_lookup_batch_size", 256
+                    self.args, "signal_lookup_batch_size", 8
                 ),
             )
             for feature in feature_stream:

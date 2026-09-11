@@ -480,7 +480,7 @@ class InferenceEngine:
         pbar_desc = {'tsv': 'Inference', 'bam': 'Inference (BAM)', 'both': 'Inference (TSV+BAM)'}.get(output_format, 'Inference')
 
         total_batches = total_samples = 0
-        pbar = tqdm(desc=pbar_desc, unit="batch", disable=not is_main, dynamic_ncols=True)
+        pbar = tqdm(desc=pbar_desc, unit=" batch", disable=not is_main, dynamic_ncols=True)
 
         # Timing
         times = {

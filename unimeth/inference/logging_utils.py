@@ -1,11 +1,37 @@
 """Logging setup used only by the inference package."""
 
 import logging
+import os
 from typing import TextIO
 
 
 INFERENCE_LOGGER_NAME = "unimeth.inference"
 _HANDLER_MARKER = "_unimeth_inference_handler"
+_LOG_LEVEL_ENV = "UNIMETH_LOG_LEVEL"
+_LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+
+
+def _resolve_log_level(level: int | str | None) -> int:
+    """Resolve an explicit level or the inference-only environment setting."""
+    if level is None:
+        level = os.environ.get(_LOG_LEVEL_ENV, "INFO")
+    if isinstance(level, int):
+        return level
+
+    normalized = level.strip().upper()
+    try:
+        return _LOG_LEVELS[normalized]
+    except KeyError as exc:
+        choices = ", ".join(_LOG_LEVELS)
+        raise ValueError(
+            f"{_LOG_LEVEL_ENV} must be one of: {choices}; got {level!r}"
+        ) from exc
 
 
 def _is_main_process() -> bool:
@@ -30,12 +56,13 @@ class _MainProcessFilter(logging.Filter):
 
 
 def configure_inference_logging(
-    level: int = logging.INFO,
+    level: int | str | None = None,
     *,
     is_main_process: bool | None = None,
     stream: TextIO | None = None,
 ) -> logging.Logger:
     """Configure and return the package-level inference logger."""
+    level = _resolve_log_level(level)
     logger = logging.getLogger(INFERENCE_LOGGER_NAME)
     logger.disabled = False
     logger.setLevel(level)
