@@ -121,6 +121,8 @@ unimeth infer \
 --model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
 --out results/arab.bam \
 --cpg 1 \
+--chg 1 \
+--chh 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
 --frequency 5khz
