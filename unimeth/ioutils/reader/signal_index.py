@@ -25,6 +25,10 @@ class SignalIndexWriteError(RuntimeError):
     """Raised before signal scanning when an index cannot be created."""
 
 
+class SignalIndexReadError(RuntimeError):
+    """Raised when signal read IDs cannot be indexed safely."""
+
+
 @dataclass(frozen=True)
 class SignalIndexStats:
     """Summary of one signal route index build."""
@@ -97,18 +101,21 @@ def iter_signal_read_ids(signal_path: str | os.PathLike[str]) -> Iterator[str]:
 
     if is_slow5_path(signal_path):
         from unimeth.ioutils.reader.slow5 import (
-            _flatten_read_ids,
+            Slow5IndexError,
+            _iter_indexed_read_ids,
             _open_slow5,
         )
 
-        signal_file = _open_slow5(signal_path)
         try:
-            for read_id in _flatten_read_ids(signal_file.get_read_ids()):
-                yield read_id
-        finally:
-            close = getattr(signal_file, "close", None)
-            if close is not None:
-                close()
+            signal_file = _open_slow5(signal_path)
+            try:
+                yield from _iter_indexed_read_ids(signal_file, signal_path)
+            finally:
+                close = getattr(signal_file, "close", None)
+                if close is not None:
+                    close()
+        except Slow5IndexError as exc:
+            raise SignalIndexReadError(str(exc)) from exc
         return
 
     raise ValueError(f"Unsupported raw signal file extension: {signal_path}")
@@ -201,9 +208,13 @@ def _matching_index_counts(
     if stored_files != current_files:
         return None
     try:
-        return int(metadata["file_count"]), int(metadata["read_count"])
+        file_count = int(metadata["file_count"])
+        read_count = int(metadata["read_count"])
     except (KeyError, ValueError):
         return None
+    if file_count != len(signal_paths) or read_count <= 0:
+        return None
+    return file_count, read_count
 
 
 def _batched(values: Iterable[tuple[str, int]], size: int):
@@ -354,6 +365,13 @@ def build_signal_route_index(
                     )
                 )
 
+        if read_count <= 0:
+            raise SignalIndexReadError(
+                "No signal read IDs were found while building the route index. "
+                "The input files may be empty or their native indexes may be "
+                "unavailable."
+            )
+
         metadata = (
             ("schema_version", _SCHEMA_VERSION),
             ("complete", "1"),
@@ -396,6 +414,21 @@ def prepare_signal_routing(
 ) -> SignalRoutingPlan:
     """Prepare single-file direct routing or a reusable multi-file index."""
     paths = _normalize_signal_paths(signal_paths)
+    from unimeth.ioutils.reader.raw_signal import is_slow5_path
+
+    for path in paths:
+        if not is_slow5_path(path):
+            continue
+        from unimeth.ioutils.reader.slow5 import (
+            Slow5IndexError,
+            _check_native_index_access,
+        )
+
+        try:
+            _check_native_index_access(path)
+        except Slow5IndexError as exc:
+            raise SignalIndexReadError(str(exc)) from exc
+
     normalized_paths = tuple(str(path) for path in paths)
     if len(paths) == 1:
         return SignalRoutingPlan(

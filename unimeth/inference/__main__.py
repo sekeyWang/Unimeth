@@ -206,7 +206,10 @@ def main():
     logger.info(format_inference_args(args))
 
     from unimeth.inference.engine import InferenceEngine
-    from unimeth.ioutils.reader.signal_index import SignalIndexWriteError
+    from unimeth.ioutils.reader.signal_index import (
+        SignalIndexReadError,
+        SignalIndexWriteError,
+    )
 
     engine = InferenceEngine(args)
     try:
@@ -217,6 +220,12 @@ def main():
             "%s\n\n"
             "Specify a writable index location and run again:\n"
             "  --signal_index /path/to/unimeth-signal-index.sqlite",
+            exc,
+        )
+        raise SystemExit(1) from None
+    except SignalIndexReadError as exc:
+        logger.error(
+            "\nCannot prepare the signal read index.\n\n%s",
             exc,
         )
         raise SystemExit(1) from None
