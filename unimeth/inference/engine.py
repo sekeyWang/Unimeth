@@ -14,8 +14,6 @@ warnings.filterwarnings('ignore', message='.*kernel version.*')
 
 import torch
 from torch.utils.data import DataLoader
-from accelerate import Accelerator
-from accelerate.utils import DataLoaderConfiguration
 from tqdm import tqdm
 
 from unimeth.config import tokenizer, get_total_stride
@@ -79,7 +77,7 @@ class InferenceEngine:
         self.args = args
         self.dataset_class = dataset_class
         self._legacy_dataset_class = dataset_class
-        self.accelerator = Accelerator(dataloader_config=DataLoaderConfiguration(dispatch_batches=False))
+        self.accelerator = None
         self.model = None
         self.dataset = None
         self.dataloader = None
@@ -90,10 +88,21 @@ class InferenceEngine:
         self._bam_index_created = False
         self._streaming_enabled = False
 
+    def _ensure_legacy_accelerator(self):
+        """Initialize Accelerate only for the temporarily retained resume path."""
+        if self.accelerator is None:
+            from accelerate import Accelerator
+            from accelerate.utils import DataLoaderConfiguration
+
+            self.accelerator = Accelerator(
+                dataloader_config=DataLoaderConfiguration(dispatch_batches=False)
+            )
+        return self.accelerator
+
     def _should_use_streaming(self) -> bool:
         """Enable the first streaming path only for one rank without resume."""
         return (
-            self.accelerator.num_processes == 1
+            (self.accelerator is None or self.accelerator.num_processes == 1)
             and not getattr(self.args, 'resume', False)
         )
     
@@ -381,7 +390,7 @@ class InferenceEngine:
 
     def _cleanup_bam_index(self):
         """Remove the temporary fallback BAM index created by this inference run."""
-        if not self.accelerator.is_main_process:
+        if self.accelerator is None or not self.accelerator.is_main_process:
             return
         cleanup_bam_index(
             self._bam_index_file,
@@ -441,6 +450,23 @@ class InferenceEngine:
             shutdown_workers()
 
     def run(self, output_format: str = 'bam'):
+        if not getattr(self.args, 'resume', False):
+            if not getattr(self.args, 'show_reading_progress', False):
+                os.environ['UNIMETH_DISABLE_READING_PROGRESS'] = '1'
+            self._streaming_enabled = True
+            from unimeth.inference.multiprocess_pipeline import (
+                MultiprocessInferencePipeline,
+            )
+
+            pipeline = MultiprocessInferencePipeline(
+                self.args,
+                output_format,
+            )
+            pipeline.validate_launch()
+            self._prepare_signal_routing()
+            return pipeline.run()
+
+        self._ensure_legacy_accelerator()
         run_failed = False
         try:
             return self._run_impl(output_format=output_format)

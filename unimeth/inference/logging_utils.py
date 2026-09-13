@@ -36,12 +36,15 @@ def _resolve_log_level(level: int | str | None) -> int:
 
 def _is_main_process() -> bool:
     """Return whether this process is the global main inference process."""
-    try:
-        from accelerate.state import PartialState
-
-        return PartialState().is_main_process
-    except Exception:
-        return True
+    for variable in ("RANK", "LOCAL_RANK"):
+        value = os.environ.get(variable)
+        if value is None:
+            continue
+        try:
+            return int(value) == 0
+        except ValueError:
+            continue
+    return True
 
 
 class _MainProcessFilter(logging.Filter):

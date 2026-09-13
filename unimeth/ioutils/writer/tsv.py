@@ -275,3 +275,52 @@ class TSVWriter:
         
         # Estimate samples
         return sum(len(p) for p in cpu_batch['patch_pos'])
+
+
+class DirectTSVWriter:
+    """Write one final TSV stream from the dedicated writer process."""
+
+    def __init__(self, output_path: str, gzip_output: bool = False):
+        self.output_path = make_output_path(output_path)
+        self.gzip_output = bool(gzip_output)
+        self._file = None
+        self._total_written = 0
+
+    def open(self):
+        if self.gzip_output:
+            self._file = gzip.open(self.output_path, 'wt', encoding='utf-8')
+        else:
+            self._file = open(self.output_path, 'w', encoding='utf-8')
+        return self
+
+    def close(self):
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def __enter__(self):
+        return self.open()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def write_batch(self, **kwargs) -> int:
+        if self._file is None:
+            raise RuntimeError('TSV writer is not open')
+
+        cpu_batch = {
+            'preds': kwargs['preds'].cpu(),
+            'methy': kwargs['methy'].cpu(),
+            'read_ids': kwargs['read_ids'],
+            'chrs': kwargs['chrs'],
+            'strands': kwargs['strands'],
+            'ref_pos': kwargs['ref_pos'],
+            'read_pos': kwargs['read_pos'],
+            'labels': kwargs['labels'],
+            'patch_pos': kwargs['patch_pos'],
+        }
+        batch_str = TSVWriter._format_batch(self, **cpu_batch)
+        self._file.write(batch_str)
+        self._total_written += batch_str.count('\n')
+        return sum(len(positions) for positions in cpu_batch['patch_pos'])

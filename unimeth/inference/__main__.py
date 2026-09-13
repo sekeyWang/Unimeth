@@ -1,12 +1,11 @@
 """
 Inference script for UniMeth.
 
-Supports TSV and BAM output formats.
-Each GPU processes data independently (no inter-rank synchronization)
-for maximum throughput.
+Supports TSV and BAM output formats. One invocation automatically uses all
+GPUs visible through CUDA_VISIBLE_DEVICES.
 
 Example usage:
-    accelerate launch -m unimeth.inference \
+    unimeth infer \
         --pod5_dir <path_to_pod5> \
         --bam_dir <path_to_bam> \
         --model_dir <finetuned_model_path> \
@@ -45,6 +44,22 @@ def get_model_info(args):
 def format_inference_args(args):
     """Format inference arguments for readable output."""
     d_model, num_layers, cnn_stride = get_model_info(args)
+    import torch
+    from unimeth.inference.multiprocess_pipeline import resolve_pipeline_layout
+
+    gpu_count = torch.cuda.device_count()
+    raw_workers = getattr(args, 'num_workers', None)
+    configured_workers = (
+        None
+        if getattr(args, 'num_workers_auto', raw_workers is None)
+        else int(raw_workers)
+    )
+    pipeline_layout = resolve_pipeline_layout(configured_workers, gpu_count)
+    compute_label = (
+        f'{gpu_count} {"GPU" if gpu_count == 1 else "GPUs"}'
+        if gpu_count
+        else 'CPU'
+    )
 
     output_items = [('Format', args.output_format)]
     if args.output_format in ('bam', 'both'):
@@ -90,11 +105,16 @@ def format_inference_args(args):
         ],
         'Processing': [
             ('Batch Size', args.batch_size),
-            (
-                'Workers',
-                f'{args.num_workers} processes'
-                if args.num_workers else 'main process',
-            ),
+            ('Compute', compute_label),
+            ('Feature Workers',
+             f'{pipeline_layout.feature_workers} total '
+             f'({"auto" if pipeline_layout.is_auto else "configured"})'),
+            ('BAM Threads',
+             f'{pipeline_layout.bam_read_threads} read + '
+             f'{pipeline_layout.bam_write_threads} write; '
+             f'{pipeline_layout.bam_finalize_threads} finalize'),
+            ('Processes',
+             f'{pipeline_layout.total_processes} total (including main)'),
             ('Use Binning', 'yes' if args.use_binning else 'no'),
             *([('Max Bin Length', args.max_bin_length)] if args.use_binning else []),
         ],
@@ -180,8 +200,10 @@ def main():
         parser.prog = 'python -m unimeth.inference'
     args = parser.parse_args()
 
+    num_workers_auto = args.num_workers is None
     args = resolve_dorado_version(args, parser)
     args = merge_with_default_config(args, defaultconfig)
+    args.num_workers_auto = num_workers_auto
     args.mode = 'inference'
     args = normalize_signal_input(args, parser)
 

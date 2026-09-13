@@ -30,6 +30,14 @@ def _parse_yes_no(value: str) -> bool:
     raise argparse.ArgumentTypeError("expected 'yes' or 'no'")
 
 
+def _parse_positive_int(value: str) -> int:
+    """Parse a strictly positive integer CLI value."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("expected an integer greater than zero")
+    return parsed
+
+
 
 def create_argument_parser(mode: str) -> argparse.ArgumentParser:
     """
@@ -61,7 +69,7 @@ Examples:
       --pore_type R10.4.1 --frequency 5khz --dorado_version 0.7.1
 
   # Multi-GPU BAM output
-  accelerate launch --num_processes 8 -m unimeth.inference \\
+  CUDA_VISIBLE_DEVICES=0,1,2,3 unimeth infer \\
       --pod5 data.pod5 --bam data.bam \\
       --model model.pt --out results.bam \\
       --cpg 1 --chg 1 --chh 1 \\
@@ -155,8 +163,9 @@ Model Types:
         parser.add_argument('--model_type', type=str, choices=['default', 'distilled'],
                            default='default', 
                            help='Model architecture: default (100M params) or distilled (62M params, faster)')
-        parser.add_argument('--num_workers', type=int, default=2,
-                           help='Number of CPU workers per GPU for data loading (default: 2, total=2 x num_gpus)')
+        parser.add_argument('--num_workers', type=_parse_positive_int, default=None,
+                           help='Total feature worker processes and BAM I/O thread cap '
+                                '(default: auto, 2 per visible GPU)')
         parser.add_argument('--bam_mode', choices=['auto', 'aligned', 'unaligned'], default='auto',
                            help='BAM interpretation: auto-detect, aligned, or unaligned (default: auto)')
         parser.add_argument('--mapq', dest='mapq_thres', type=int, default=1,

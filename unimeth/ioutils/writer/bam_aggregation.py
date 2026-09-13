@@ -82,6 +82,7 @@ class AggregationBAMWriter:
         bam_reader: BamReader | None,
         keep_mv: bool = False,
         record_reader=None,
+        threads: int = 1,
     ):
         if bam_reader is None and record_reader is None:
             raise ValueError("bam_reader or record_reader is required")
@@ -89,10 +90,16 @@ class AggregationBAMWriter:
         self.bam_reader = bam_reader
         self.record_reader = record_reader
         self.keep_mv = keep_mv
+        self.threads = max(1, int(threads or 1))
         
         # Initialize output BAM with template header
         template = pysam.AlignmentFile(template_bam_path, "rb")
-        self.output_bam = pysam.AlignmentFile(output_path, "wb", header=template.header)
+        self.output_bam = pysam.AlignmentFile(
+            output_path,
+            "wb",
+            header=template.header,
+            threads=self.threads,
+        )
         template.close()
         
         # Buffer state: OrderedDict maintains insertion order
@@ -117,9 +124,9 @@ class AggregationBAMWriter:
         preds: torch.Tensor,
         methy: torch.Tensor,
         read_ids: List[str],
-        chrs: List[str],
-        strands: List[str],
-        ref_pos: List[List[int]],
+        chrs: List[str] | None,
+        strands: List[str] | None,
+        ref_pos: List[List[int]] | None,
         read_pos: List[List[int]],
         patch_pos: List[List[int]],
         patch_idx: List[int],
@@ -178,9 +185,9 @@ class AggregationBAMWriter:
                     prob=float(preds_np[idx]),
                     methy_type=self.token_to_type.get(int(methy_np[idx]), '[CpG]'),
                     read_pos=int(read_pos[i][j]),
-                    ref_pos=int(ref_pos[i][j]),
-                    chr=chrs[i],
-                    strand=strands[i],
+                    ref_pos=int(ref_pos[i][j]) if ref_pos is not None else -1,
+                    chr=chrs[i] if chrs is not None else "",
+                    strand=strands[i] if strands is not None else "",
                     patch_idx=p_idx,
                 )
                 buf.add_patch(p_idx, pred_data)
