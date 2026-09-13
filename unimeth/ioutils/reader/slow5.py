@@ -5,10 +5,57 @@ The rest of UniMeth consumes a small POD5-like interface:
 ``signal`` and ``calibration.offset/scale``.  This module adapts pyslow5
 records to that interface so the existing data flow can stay unchanged.
 """
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+
+
+class Slow5IndexError(RuntimeError):
+    """Raised when pyslow5 cannot use its native ``.idx`` sidecar."""
+
+
+def _native_index_path(path):
+    return Path(f"{Path(path)}.idx")
+
+
+def _check_native_index_access(path):
+    """Fail early when pyslow5 cannot read or create its native index."""
+    signal_path = Path(path)
+    index_path = _native_index_path(signal_path)
+    if index_path.exists():
+        if not index_path.is_file():
+            raise Slow5IndexError(
+                "SLOW5/BLOW5 native index path is not a file:\n"
+                f"  {index_path}"
+            )
+        if not os.access(index_path, os.R_OK):
+            raise Slow5IndexError(
+                "SLOW5/BLOW5 native index is not readable:\n"
+                f"  {index_path}"
+            )
+        return index_path
+
+    if not os.access(signal_path.parent, os.W_OK):
+        raise Slow5IndexError(
+            "Required SLOW5/BLOW5 native index is missing:\n"
+            f"  {index_path}\n"
+            "The signal directory is not writable, so pyslow5 cannot create it.\n"
+            "Create the index next to the signal file in a writable location:\n"
+            f"  slow5tools index {signal_path}"
+        )
+    return index_path
+
+
+def _verify_native_index(index_path, signal_path):
+    if not index_path.is_file():
+        raise Slow5IndexError(
+            "pyslow5 could not create or load the required native index:\n"
+            f"  {index_path}\n"
+            "Create it next to the signal file and run again:\n"
+            f"  slow5tools index {signal_path}"
+        )
 
 
 def _import_pyslow5():
@@ -35,11 +82,13 @@ def _import_pyslow5():
 
 
 def _open_slow5(path):
-    if not Path(path).is_file():
+    signal_path = Path(path)
+    if not signal_path.is_file():
         raise FileNotFoundError(f"SLOW5/BLOW5 file not found: {path}")
 
+    _check_native_index_access(signal_path)
     pyslow5 = _import_pyslow5()
-    return pyslow5.Open(str(path), "r")
+    return pyslow5.Open(str(signal_path), "r")
 
 
 def _record_read_id(record):
@@ -62,6 +111,27 @@ def _flatten_read_ids(read_ids):
             yield _normalize_read_id(read_id)
 
 
+def _iter_indexed_read_ids(signal_file, path):
+    try:
+        raw_read_ids = signal_file.get_read_ids()
+    except Exception as exc:
+        raise Slow5IndexError(
+            "Unable to read IDs from the SLOW5/BLOW5 native index:\n"
+            f"  {_native_index_path(path)}"
+        ) from exc
+
+    _verify_native_index(_native_index_path(path), path)
+    found = False
+    for read_id in _flatten_read_ids(raw_read_ids):
+        found = True
+        yield read_id
+    if not found:
+        raise Slow5IndexError(
+            "No read IDs were returned from the SLOW5/BLOW5 native index:\n"
+            f"  {_native_index_path(path)}"
+        )
+
+
 def _record_signal(record):
     for key in ("signal", "raw_signal", "raw_signal_pa"):
         if key in record:
@@ -81,16 +151,17 @@ def _calibration_from_record(record):
 class Slow5Reader:
     """POD5 DatasetReader-compatible wrapper for one SLOW5/BLOW5 file."""
 
-    def __init__(self, path):
+    def __init__(self, path, load_read_ids=True):
         self.path = str(path)
         self._slow5 = _open_slow5(path)
         self.read_ids = []
         self._read_id_set = set()
-        self._build_index()
+        if load_read_ids:
+            self._build_index()
 
     def _build_index(self):
         if hasattr(self._slow5, "get_read_ids"):
-            self.read_ids = list(_flatten_read_ids(self._slow5.get_read_ids()))
+            self.read_ids = list(_iter_indexed_read_ids(self._slow5, self.path))
             self._read_id_set = set(self.read_ids)
             return
 
@@ -105,6 +176,37 @@ class Slow5Reader:
         if record is None:
             raise KeyError(f"Read {read_id} not found in {self.path}")
 
+        return self._adapt_record(read_id, record)
+
+    def get_reads(self, read_ids):
+        """Fetch a small read-ID batch using the native SLOW5 index."""
+        normalized_ids = [_normalize_read_id(read_id) for read_id in read_ids]
+        if not normalized_ids:
+            return {}
+
+        records = None
+        if hasattr(self._slow5, "get_read_list"):
+            for kwargs in ({"aux": "all", "pA": False}, {"aux": "all"}, {}):
+                try:
+                    records = self._slow5.get_read_list(normalized_ids, **kwargs)
+                    _verify_native_index(
+                        _native_index_path(self.path),
+                        self.path,
+                    )
+                    break
+                except TypeError:
+                    continue
+        if records is None:
+            records = (self._fetch_record(read_id) for read_id in normalized_ids)
+
+        return {
+            read_id: self._adapt_record(read_id, record)
+            for read_id, record in zip(normalized_ids, records)
+            if record is not None
+        }
+
+    @staticmethod
+    def _adapt_record(read_id, record):
         return SimpleNamespace(
             read_id=read_id,
             signal=_record_signal(record),
@@ -127,3 +229,8 @@ class Slow5Reader:
             if _record_read_id(record) == str(read_id):
                 return record
         return None
+
+    def close(self):
+        close = getattr(self._slow5, "close", None)
+        if close is not None:
+            close()

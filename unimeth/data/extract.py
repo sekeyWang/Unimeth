@@ -10,6 +10,48 @@ from .coords import parse_chromosome_filter, complement_seq, get_ref_pos, align_
 from .sites import find_methylation_sites
 
 
+_CIGAR_HARD_CLIP = 5
+
+
+class SignalSequenceMismatchError(ValueError):
+    """Signal events cannot be aligned safely to the BAM record sequence."""
+
+
+def reconcile_signal_events_to_sequence(bam_read, seq, signal_event):
+    """Crop full-read signal events to a hard-clipped supplementary SEQ."""
+    # Some producers may already keep mv record-local. In that case the
+    # sequence/event invariant is satisfied and no CIGAR-based crop is needed.
+    if len(signal_event) == len(seq):
+        return signal_event
+
+    cigartuples = getattr(bam_read, "cigartuples", None) or ()
+    left_hard_clip = (
+        cigartuples[0][1]
+        if cigartuples and cigartuples[0][0] == _CIGAR_HARD_CLIP
+        else 0
+    )
+    right_hard_clip = (
+        cigartuples[-1][1]
+        if cigartuples and cigartuples[-1][0] == _CIGAR_HARD_CLIP
+        else 0
+    )
+    if getattr(bam_read, "is_reverse", False):
+        left_hard_clip, right_hard_clip = right_hard_clip, left_hard_clip
+
+    expected_event_count = left_hard_clip + len(seq) + right_hard_clip
+    if (
+        not getattr(bam_read, "is_supplementary", False)
+        or len(signal_event) != expected_event_count
+    ):
+        raise SignalSequenceMismatchError(
+            f"read {getattr(bam_read, 'query_name', '<unknown>')} has "
+            f"{len(seq)} sequence bases but {len(signal_event)} signal events"
+        )
+
+    event_end = len(signal_event) - right_hard_clip
+    return signal_event[left_hard_clip:event_end]
+
+
 class SignalFeatureExtractor:
     """
     Extractor for raw nanopore signal features.
@@ -17,7 +59,7 @@ class SignalFeatureExtractor:
     Extracts signal events and methylation labels from POD5 and BAM data.
     """
     
-    def __init__(self, args):
+    def __init__(self, args, apply_alignment_filters=True):
         """
         Initialize raw feature extractor.
         
@@ -25,6 +67,7 @@ class SignalFeatureExtractor:
             args: Arguments with mapq_thres, pore_type, chr, and methylation flags
         """
         self.mapq_thres = getattr(args, 'mapq_thres', 10)
+        self.apply_alignment_filters = apply_alignment_filters
         self.align_ref = (getattr(args, 'pore_type', 'R10.4.1') == 'R9.4.1')
         self.chr_mode, self.chr_list = parse_chromosome_filter(getattr(args, 'chr', '|'))
         
@@ -100,11 +143,11 @@ class SignalFeatureExtractor:
 
         # Filter by mapping quality and chromosome only for aligned reads.
         mapq = bam_read.mapping_quality
-        if not is_unmapped and mapq < self.mapq_thres:
+        if self.apply_alignment_filters and not is_unmapped and mapq < self.mapq_thres:
             return None
 
         chrom = bam_read.reference_name if not is_unmapped else '*'
-        if not is_unmapped:
+        if self.apply_alignment_filters and not is_unmapped:
             if self.chr_mode == 'exclude' and chrom in self.chr_list:
                 return None
             elif self.chr_mode == 'include' and chrom not in self.chr_list:
@@ -123,6 +166,13 @@ class SignalFeatureExtractor:
         # Extract signal events
         move = self.get_move(bam_read)
         signal_event = self.get_signal(signal, move)
+        raw_signal_event_count = len(signal_event)
+        signal_event = reconcile_signal_events_to_sequence(
+            bam_read,
+            seq,
+            signal_event,
+        )
+        hard_clipped_reconciled = len(signal_event) != raw_signal_event_count
 
         from unimeth.utils.bam_tags import get_modifications
         mod_dict = get_modifications(bam_read, self.detect_mod) if self.detect_mod else {}
@@ -167,6 +217,7 @@ class SignalFeatureExtractor:
             'reference_start': bam_read.reference_start,
             'bases': list(seq),
             'signal_event': signal_event,
+            'hard_clipped_reconciled': hard_clipped_reconciled,
             'pred_pos': pred_pos,
             'bis_label': bis_label,
             'mapQ': mapq,

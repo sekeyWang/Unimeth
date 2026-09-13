@@ -6,10 +6,12 @@ Provides efficient random access to BAM records and methylation prediction loadi
 import os
 import hashlib
 import pickle
+import re
 import time
 from typing import Dict, List
 
 import pysam
+from packaging.version import Version
 
 from unimeth.utils import local_print
 from unimeth.utils.bam_tags import get_mod_config, get_target_positions
@@ -17,6 +19,32 @@ from unimeth.data.coords import get_ref_pos
 
 
 BAM_INDEX_SUFFIX = ".unimeth.idx"
+_DORADO_VERSION_PREFIX = re.compile(r"^[vV]?(\d+\.\d+\.\d+)")
+
+
+def extract_dorado_version_from_header(header: dict) -> str | None:
+    """Extract the Dorado basecaller release from a BAM header dictionary."""
+    versions = set()
+    for program in header.get("PG", []):
+        program_id = str(program.get("ID", "")).lower()
+        program_name = str(program.get("PN", "")).lower()
+        if program_name != "dorado" or not re.fullmatch(r"basecaller(?:_\d+)?", program_id):
+            continue
+
+        match = _DORADO_VERSION_PREFIX.match(str(program.get("VN", "")))
+        if match:
+            versions.add(str(Version(match.group(1))))
+
+    if len(versions) > 1:
+        version_list = ", ".join(sorted(versions, key=Version))
+        raise ValueError(f"multiple Dorado basecaller versions found in BAM header: {version_list}")
+    return next(iter(versions), None)
+
+
+def detect_dorado_version_from_bam(bam_path: str) -> str | None:
+    """Read only the BAM header and return its Dorado basecaller release."""
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam_file:
+        return extract_dorado_version_from_header(bam_file.header.to_dict())
 
 
 def default_bam_index_file(bam_path: str) -> str:

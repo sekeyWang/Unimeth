@@ -1,6 +1,14 @@
 Changelog
 =========
 
+v0.3.0
+------
+- Switch inference to BAM-primary streaming
+- Add BAM modes and alignment filtering
+- Add multi-process, multi-GPU inference with a single writer
+- Add multi-file POD5/SLOW5 signal routing
+- Improve modBAM tags, Dorado detection, logging, and progress
+
 v0.2.5
 ------
 - Improve multi-GPU BAM resume coordination

@@ -153,7 +153,7 @@ class DataConfig:
     # Platform parameters
     pore_type: str = 'R9.4.1'
     frequency: str = '4khz'
-    dorado_version: float = 0.71
+    dorado_version: str = '0.7.1'
     
     # Filtering thresholds
     mapq_thres: int = 0
