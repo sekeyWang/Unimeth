@@ -61,7 +61,7 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
         self.assertEqual(args.signal_format, "SLOW5/BLOW5")
         self.assertEqual(args.signal_suffixes, SLOW5_SUFFIXES)
         self.assertEqual(args.signal_label, "SLOW5/BLOW5")
-        self.assertEqual(args.pod5_dir, "reads.blow5")
+        self.assertIsNone(args.pod5_dir)
 
     def test_pod5_normalizes_to_signal_input(self):
         parser = create_argument_parser("inference")
@@ -110,8 +110,16 @@ class InferenceArgumentAliasesTest(unittest.TestCase):
     def test_inference_mapq_sets_mapq_threshold(self):
         parser = create_argument_parser("inference")
 
-        self.assertEqual(parser.parse_args([]).mapq_thres, 0)
+        self.assertEqual(parser.parse_args([]).mapq_thres, 1)
         self.assertEqual(parser.parse_args(["--mapq", "20"]).mapq_thres, 20)
+
+    def test_inference_aligned_bam_filter_defaults(self):
+        args = create_argument_parser("inference").parse_args([])
+
+        self.assertEqual(args.bam_mode, "auto")
+        self.assertEqual(args.identity_thres, 0.0)
+        self.assertTrue(args.skip_unmapped)
+        self.assertFalse(args.include_supplementary)
 
     def test_inference_keep_mv_flag_defaults_to_false_and_can_be_enabled(self):
         parser = create_argument_parser("inference")
