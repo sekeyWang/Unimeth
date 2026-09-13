@@ -332,7 +332,7 @@ def _reader_worker_impl(
         BamStreamReader,
         SerializedBamStreamItem,
     )
-    from unimeth.model.streaming_pipeline import RecordStreamEnd
+    from unimeth.inference.feature_pipeline import RecordStreamEnd
 
     reader = BamStreamReader(
         args.bam_dir,
@@ -375,7 +375,7 @@ def _feature_worker_impl(
 ) -> None:
     import pysam
 
-    from unimeth.model.streaming_pipeline import (
+    from unimeth.inference.feature_pipeline import (
         BamFeatureBatchProcessor,
         iter_record_batches,
     )
@@ -428,10 +428,9 @@ def _batcher_worker_impl(
     consumer_release_event,
 ) -> None:
     from unimeth.config import get_total_stride
-    from unimeth.model.datasets import Binning, collate_fn
+    from unimeth.inference.batching import InferenceBinning, collate_inference
 
-    binning = Binning(args)
-    binning.reads_per_flush = None
+    binning = InferenceBinning(args)
     pending = []
     batch_id = 0
     patch_count = 0
@@ -441,8 +440,7 @@ def _batcher_worker_impl(
 
     def emit_pending() -> None:
         nonlocal pending, batch_id
-        collated = collate_fn(
-            "inference",
+        collated = collate_inference(
             pending,
             total_stride=total_stride,
         )
@@ -668,7 +666,6 @@ def _writer_worker_impl(
                 AggregationBAMWriter(
                     output_path=bam_work,
                     template_bam_path=args.bam_dir,
-                    bam_reader=None,
                     record_reader=BamOffsetReader(
                         args.bam_dir,
                         threads=1,

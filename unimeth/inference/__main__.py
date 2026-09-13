@@ -74,8 +74,6 @@ def format_inference_args(args):
             ('TSV Output', tsv_output),
             ('Gzip TSV', 'yes' if gzip_tsv else 'no'),
         ])
-    output_items.append(('Resume', 'yes' if args.resume else 'no'))
-
     sections = {
         'Input': [
             ('Signal', args.signal_dir),
@@ -154,8 +152,6 @@ def normalize_signal_input(args, parser):
         args.signal_suffixes = POD5_SUFFIXES
     args.signal_label = args.signal_format
 
-    # Keep the legacy internal field populated until dataset names are cleaned up.
-    args.pod5_dir = args.signal_dir
     return args
 
 
@@ -173,7 +169,7 @@ def resolve_dorado_version(args, parser, detector=None):
         return args
 
     if detector is None:
-        from unimeth.ioutils.reader.bam import detect_dorado_version_from_bam
+        from unimeth.inference.bam_metadata import detect_dorado_version_from_bam
         detector = detect_dorado_version_from_bam
 
     try:
@@ -209,11 +205,10 @@ def main():
 
     logger.info(format_inference_args(args))
 
-    from unimeth.model.datasets import Pod5BamDataset
     from unimeth.inference.engine import InferenceEngine
     from unimeth.ioutils.reader.signal_index import SignalIndexWriteError
 
-    engine = InferenceEngine(args, Pod5BamDataset)
+    engine = InferenceEngine(args)
     try:
         engine.run(output_format=args.output_format)
     except SignalIndexWriteError as exc:

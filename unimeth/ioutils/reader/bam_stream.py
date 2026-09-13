@@ -24,7 +24,7 @@ class BamStreamItem:
 
 @dataclass(frozen=True)
 class SerializedBamStreamItem:
-    """Pickle-safe BAM item passed from the reader to DataLoader workers."""
+    """Pickle-safe BAM item passed from the reader to feature workers."""
 
     output_record_key: int
     signal_read_id: str

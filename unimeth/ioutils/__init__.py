@@ -1,16 +1,6 @@
-"""
-IO module for reading and writing various file formats.
+"""Public I/O exports loaded on demand to avoid unrelated reader side effects."""
 
-Organized into two submodules:
-- io.reader: File reading utilities
-- io.writer: File writing utilities
-"""
-
-# Reader imports
-from .reader import BamReader, SignalReader, TSVReader, BEDReader, PredictionRecord
-
-# Writer imports
-from .writer import LabelBAMWriter, AggregationBAMWriter, TSVWriter
+from importlib import import_module
 
 __all__ = [
     # Readers
@@ -24,3 +14,29 @@ __all__ = [
     'AggregationBAMWriter',
     'TSVWriter',
 ]
+
+
+_EXPORTS = {
+    'BamReader': ('.reader.bam', 'BamReader'),
+    'SignalReader': ('.reader.signal', 'SignalReader'),
+    'TSVReader': ('.reader.tsv', 'TSVReader'),
+    'BEDReader': ('.reader.bed', 'BEDReader'),
+    'PredictionRecord': ('.reader.tsv', 'PredictionRecord'),
+    'LabelBAMWriter': ('.writer.bam_label', 'LabelBAMWriter'),
+    'AggregationBAMWriter': ('.writer.bam_aggregation', 'AggregationBAMWriter'),
+    'TSVWriter': ('.writer.tsv', 'TSVWriter'),
+}
+
+
+def __getattr__(name):
+    try:
+        module_name, attribute_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+    value = getattr(import_module(module_name, __name__), attribute_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

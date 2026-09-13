@@ -3,17 +3,15 @@ Aggregation BAM writer for inference results.
 
 Writes methylation predictions to BAM format with MM/ML tags.
 Features:
-- Per-read aggregation: collects all patches for a read before writing
+- Per-record aggregation: collects all patches for one BAM record before writing
 - Bitmap tracking: uses patch_idx/total_patches to detect completeness
-- Periodic flush: flushes oldest reads when buffer is full
-- Independent per-rank operation: no inter-process communication needed
+- Stable BAM virtual offsets identify the original output record
 """
-import os
 import time
 import logging
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 
 
 import pysam
@@ -21,7 +19,6 @@ import numpy as np
 import torch
 
 from unimeth.config import tokenizer, methy_types
-from unimeth.ioutils.reader.bam import BamReader
 from unimeth.utils.bam_tags import write_mm_ml_tags
 
 logger = logging.getLogger(__name__)
@@ -42,10 +39,10 @@ class PatchPrediction:
 
 @dataclass
 class ReadBuffer:
-    """Buffer for aggregating patches of a single read."""
+    """Buffer for aggregating patches of a single BAM record."""
     read_id: str
     expected: int  # Total patches expected
-    output_record_key: int | str | None = None
+    output_record_key: int | str
     received: Dict[int, List[PatchPrediction]] = field(default_factory=lambda: defaultdict(list))
     create_time: float = field(default_factory=time.time)
     
@@ -62,16 +59,13 @@ class AggregationBAMWriter:
     """
     BAM writer with per-read aggregation support.
     
-    Each rank maintains its own buffer. Reads are aggregated until all patches
-    are received, then written to BAM with MM/ML tags.
-    
-    This writer relies on the Dataset to signal when reads are complete via
-    __reads_complete__ markers, rather than using internal buffer limits.
+    Records are aggregated by stable BAM virtual offset until all patches are
+    received, then written to BAM with MM/ML tags.
     
     Args:
-        output_path: Path to output BAM file (should include rank info, e.g., "output_rank0.bam")
+        output_path: Path to output BAM file
         template_bam_path: Path to template BAM for header copying
-        bam_reader: BamReader instance for fetching original reads
+        record_reader: Offset reader for fetching original BAM records
         keep_mv: Whether to retain mv tags in output modBAM
     """
     
@@ -79,15 +73,13 @@ class AggregationBAMWriter:
         self,
         output_path: str,
         template_bam_path: str,
-        bam_reader: BamReader | None,
+        record_reader,
         keep_mv: bool = False,
-        record_reader=None,
         threads: int = 1,
     ):
-        if bam_reader is None and record_reader is None:
-            raise ValueError("bam_reader or record_reader is required")
+        if record_reader is None:
+            raise ValueError("record_reader is required")
         self.output_path = output_path
-        self.bam_reader = bam_reader
         self.record_reader = record_reader
         self.keep_mv = keep_mv
         self.threads = max(1, int(threads or 1))
@@ -111,11 +103,7 @@ class AggregationBAMWriter:
             'reads_flushed_incomplete': 0,
             'reads_discarded_on_error': 0,
             'records_written': 0,
-            'patches_received': 0,
-            'patches_dropped': 0,
         }
-        self._completed_read_ids: List[str] = []
-        
         # Token to methylation type mapping
         self.token_to_type = {tokenizer[t]: t for t in methy_types}
     
@@ -131,7 +119,7 @@ class AggregationBAMWriter:
         patch_pos: List[List[int]],
         patch_idx: List[int],
         total_patches: List[int],
-        output_record_keys: List[int | str] | None = None,
+        output_record_keys: List[int | str],
     ) -> int:
         """
         Process a batch of predictions.
@@ -155,10 +143,8 @@ class AggregationBAMWriter:
         sites_processed = 0
         
         for i, read_id in enumerate(read_ids):
-            output_record_key = (
-                output_record_keys[i] if output_record_keys is not None else None
-            )
-            buffer_key = output_record_key if output_record_key is not None else read_id
+            output_record_key = output_record_keys[i]
+            buffer_key = output_record_key
             num_sites = len(patch_pos[i])
 
             # Initialize buffer for new read
@@ -166,7 +152,7 @@ class AggregationBAMWriter:
                 self.buffer[buffer_key] = ReadBuffer(
                     read_id,
                     total_patches[i],
-                    output_record_key=output_record_key,
+                    output_record_key,
                 )
 
             buf = self.buffer[buffer_key]
@@ -200,20 +186,6 @@ class AggregationBAMWriter:
         
         return sites_processed
     
-    def on_reads_complete(self):
-        """
-        Called when Dataset signals that a batch of reads is complete.
-        Only flushes reads that have received all expected patches; incomplete
-        reads stay in the buffer to receive their remaining patches from the
-        next bin flush before the next on_reads_complete call.
-        """
-        if not self.buffer:
-            return
-
-        for record_key in list(self.buffer.keys()):
-            if self.buffer[record_key].is_complete:
-                self._flush_complete_read(record_key)
-    
     def _flush_complete_read(self, record_key):
         """Flush a complete read to BAM."""
         if record_key not in self.buffer:
@@ -224,14 +196,7 @@ class AggregationBAMWriter:
         # Generate MM/ML and write
         self._write_read_to_bam(buf)
         self.stats['reads_completed'] += 1
-        self._completed_read_ids.append(buf.read_id)
 
-    def pop_completed_read_ids(self) -> List[str]:
-        """Return reads safely aggregated since the previous call."""
-        completed_read_ids = self._completed_read_ids
-        self._completed_read_ids = []
-        return completed_read_ids
-    
     def _extract_positions_scores(
         self,
         preds: list,
@@ -275,23 +240,12 @@ class AggregationBAMWriter:
 
     def _write_read_to_bam(self, buf: ReadBuffer):
         """Write a read's aggregated predictions to BAM."""
-        output_record_key = getattr(buf, 'output_record_key', None)
-        if output_record_key is not None:
-            if self.record_reader is None:
-                logger.warning("No BAM offset reader available for record %s", output_record_key)
-                return
-            try:
-                bam_read = self.record_reader.get_record(output_record_key)
-            except (KeyError, OSError, ValueError) as exc:
-                logger.warning("BAM record %s could not be loaded: %s", output_record_key, exc)
-                return
-        else:
-            # Legacy signal-first path: look up by read ID and retain its old semantics.
-            bam_reads = self.bam_reader.get_read_by_id(buf.read_id)
-            if not bam_reads:
-                logger.warning(f"Read {buf.read_id} not found in BAM")
-                return
-            bam_read = bam_reads[0]
+        output_record_key = buf.output_record_key
+        try:
+            bam_read = self.record_reader.get_record(output_record_key)
+        except (KeyError, OSError, ValueError) as exc:
+            logger.warning("BAM record %s could not be loaded: %s", output_record_key, exc)
+            return
         
         # Get forward sequence (original orientation)
         fwd_seq = bam_read.get_forward_sequence()
@@ -346,9 +300,7 @@ class AggregationBAMWriter:
         """Close writer and flush remaining reads."""
         logger.info(f"Closing BAM writer, flushing {len(self.buffer)} remaining reads")
         
-        # Preserve a partial record for callers that prefer breadth of output over
-        # complete per-read calls. It deliberately remains out of the checkpoint
-        # so a later resume can replace it with a complete record.
+        # Preserve partial records at a normal end while reporting them clearly.
         incomplete_count = 0
         for record_key in list(self.buffer.keys()):
             buf = self.buffer[record_key]
@@ -367,7 +319,6 @@ class AggregationBAMWriter:
             else:
                 self._write_read_to_bam(buf)
                 self.stats['reads_completed'] += 1
-                self._completed_read_ids.append(buf.read_id)
 
         omitted_count = incomplete_count - _INCOMPLETE_READ_DEBUG_LIMIT
         if omitted_count > 0:
@@ -378,8 +329,7 @@ class AggregationBAMWriter:
         
         self.buffer.clear()
         self.output_bam.close()
-        if self.record_reader is not None:
-            self.record_reader.close()
+        self.record_reader.close()
         
         # Log statistics
         logger.info(
@@ -407,8 +357,7 @@ class AggregationBAMWriter:
 
         self.buffer.clear()
         self.output_bam.close()
-        if self.record_reader is not None:
-            self.record_reader.close()
+        self.record_reader.close()
     
     def __enter__(self):
         return self

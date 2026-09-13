@@ -156,8 +156,6 @@ Model Types:
                            help='TSV output path when --output_format both (defaults to --out_dir)')
         parser.add_argument('--gzip', action='store_true',
                            help='Compress TSV output with gzip (.gz). Applies to --output_format tsv or both')
-        parser.add_argument('--resume', action='store_true',
-                           help='Resume an interrupted inference run using completed-read checkpoints')
         parser.add_argument('--bam_out_dir', '--bam_out', dest='bam_out_dir', type=str, default=None,
                            help='BAM output path when --output_format both (defaults to --out_dir)')
         parser.add_argument('--model_type', type=str, choices=['default', 'distilled'],
@@ -178,15 +176,8 @@ Model Types:
                            help='Skip unmapped records in aligned BAM mode (default: yes)')
         parser.add_argument('--keep_mv', '--keep-mv', dest='keep_mv', action='store_true',
                            help='Keep mv tag in output modBAM (default: remove mv tag)')
-        parser.add_argument('--show_reading_progress', action='store_true',
-                           help='Show tqdm progress bar for data reading (default: disabled for clean output)')
         parser.add_argument('--signal_index', type=str, default=None,
                            help='Signal route index path (default: .unimeth-signal-index.sqlite in a multi-file signal directory)')
-        # BAM output: read-level flush control
-        # The Dataset flushes bins every N reads and signals the BAM writer via __reads_complete__ markers.
-        # This ensures all patches for a batch of reads are collected before writing to BAM.
-        parser.add_argument('--reads_per_flush', type=int, default=1000,
-                           help='Number of reads to accumulate before flushing to BAM (default: 1000)')
     
     # Run name with timestamp
     current_time = datetime.datetime.now()
