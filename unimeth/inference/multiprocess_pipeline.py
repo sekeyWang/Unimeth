@@ -12,6 +12,7 @@ import contextlib
 import logging
 import os
 import queue
+import threading
 import time
 import traceback
 from dataclasses import asdict, dataclass
@@ -145,6 +146,11 @@ class FeatureStreamEnd:
 @dataclass(frozen=True)
 class ModelStreamEnd:
     pass
+
+
+@dataclass(frozen=True)
+class _PrefetchFailure:
+    error: BaseException
 
 
 @dataclass(frozen=True)
@@ -282,6 +288,39 @@ def _get_bounded(source_queue, stop_event):
         except queue.Empty:
             continue
     raise PipelineCancelled("pipeline cancellation requested")
+
+
+def _configure_batcher_torch_threads(torch_module) -> None:
+    """Match PyTorch DataLoader workers for small collation operations."""
+    torch_module.set_num_threads(1)
+    torch_module.set_num_interop_threads(1)
+
+
+def _prefetch_model_batches(
+    model_queue,
+    prefetch_queue,
+    stop_event,
+    thread_initializer=None,
+) -> None:
+    """Fetch and pin one batch ahead while the GPU processes the current one."""
+    try:
+        if thread_initializer is not None:
+            thread_initializer()
+        while True:
+            message = _get_bounded(model_queue, stop_event)
+            if isinstance(message, ModelBatch):
+                for name in _MODEL_TENSOR_NAMES:
+                    message.batch[name] = message.batch[name].pin_memory()
+            _put_bounded(prefetch_queue, message, stop_event)
+            if isinstance(message, ModelStreamEnd):
+                return
+    except PipelineCancelled:
+        return
+    except BaseException as error:
+        try:
+            _put_bounded(prefetch_queue, _PrefetchFailure(error), stop_event)
+        except PipelineCancelled:
+            return
 
 
 def _report_failure(
@@ -427,9 +466,12 @@ def _batcher_worker_impl(
     model_workers: int,
     consumer_release_event,
 ) -> None:
+    import torch
+
     from unimeth.config import get_total_stride
     from unimeth.inference.batching import InferenceBinning, collate_inference
 
+    _configure_batcher_torch_threads(torch)
     binning = InferenceBinning(args)
     pending = []
     batch_id = 0
@@ -558,9 +600,27 @@ def _gpu_worker_impl(
     sites = 0
     model_seconds = 0.0
     profile_timing = os.environ.get("UNIMETH_LOG_LEVEL", "INFO").upper() == "DEBUG"
+    prefetch_thread = None
+    input_queue = model_queue
+    if device.type == "cuda":
+        input_queue = queue.Queue(maxsize=1)
+        prefetch_thread = threading.Thread(
+            target=_prefetch_model_batches,
+            name=f"unimeth-model-prefetch-{worker_id}",
+            args=(
+                model_queue,
+                input_queue,
+                stop_event,
+                lambda: torch.cuda.set_device(device_index),
+            ),
+            daemon=True,
+        )
+        prefetch_thread.start()
 
     while True:
-        message = _get_bounded(model_queue, stop_event)
+        message = _get_bounded(input_queue, stop_event)
+        if isinstance(message, _PrefetchFailure):
+            raise message.error
         if isinstance(message, ModelStreamEnd):
             break
         if not isinstance(message, ModelBatch):
@@ -569,7 +629,7 @@ def _gpu_worker_impl(
         batch = message.batch
         if device.type == "cuda":
             for name in _MODEL_TENSOR_NAMES:
-                batch[name] = batch[name].pin_memory().to(device, non_blocking=True)
+                batch[name] = batch[name].to(device, non_blocking=True)
             autocast = torch.amp.autocast("cuda", dtype=torch.bfloat16)
         else:
             autocast = contextlib.nullcontext()
@@ -614,6 +674,8 @@ def _gpu_worker_impl(
         batches += 1
         sites += result.site_count
 
+    if prefetch_thread is not None:
+        prefetch_thread.join()
     _put_bounded(prediction_queue, PredictionStreamEnd(worker_id), stop_event)
     status_queue.put(
         GPUWorkerDone(
