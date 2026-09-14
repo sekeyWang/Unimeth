@@ -113,8 +113,12 @@ Model Types:
     # Common model arguments
     parser.add_argument('--model_dir', '--model', dest='model_dir', type=str,
                         help='Path to model checkpoint (.pt, .bin, or pytorch_model.bin)')
-    parser.add_argument('--batch_size', type=int, 
-                        help='Batch size per GPU (default: 512 after config merge)')
+    parser.add_argument(
+        '--batch_size',
+        type=int,
+        default=256 if mode == 'inference' else None,
+        help='Batch size per GPU (default: 256)',
+    )
     parser.add_argument('--pore_type', type=str, choices=['R9.4.1', 'R10.4.1'],
                         help='Nanopore chemistry type')
     parser.add_argument('--frequency', type=str, choices=['4khz', '5khz'],

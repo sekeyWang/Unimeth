@@ -27,6 +27,11 @@ from unimeth.inference.progress import RecordCompletionTracker, format_compact_c
 logger = logging.getLogger(__name__)
 _QUEUE_POLL_SECONDS = 0.1
 _PROCESS_JOIN_SECONDS = 30.0
+_PROGRESS_UPDATE_INTERVAL_SECONDS = 0.5
+
+
+def _progress_update_due(last_update: float, now: float) -> bool:
+    return now - last_update >= _PROGRESS_UPDATE_INTERVAL_SECONDS
 
 
 @dataclass(frozen=True)
@@ -392,7 +397,7 @@ def _reader_worker_impl(
         if len(batch) >= lookup_size:
             _put_bounded(record_queue, tuple(batch), stop_event)
             now = time.monotonic()
-            if now - last_progress >= 0.5:
+            if _progress_update_due(last_progress, now):
                 status_queue.put(ReaderProgress(asdict(reader.stats)))
                 last_progress = now
             batch = []
@@ -750,6 +755,7 @@ def _writer_worker_impl(
         sites = 0
         record_tracker = RecordCompletionTracker() if bam_writer is None else None
         records = 0
+        last_progress = time.monotonic()
         while ended < model_workers:
             message = _get_bounded(prediction_queue, stop_event)
             if isinstance(message, PredictionStreamEnd):
@@ -809,7 +815,10 @@ def _writer_worker_impl(
                 )
             batches += 1
             sites += message.site_count
-            status_queue.put(WriterProgress(records, batches, sites))
+            now = time.monotonic()
+            if _progress_update_due(last_progress, now):
+                status_queue.put(WriterProgress(records, batches, sites))
+                last_progress = now
 
         if stop_event.is_set():
             raise PipelineCancelled("pipeline cancellation requested")
