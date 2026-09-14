@@ -597,6 +597,7 @@ def _gpu_worker_impl(
         model_path=getattr(args, "model_dir", None),
         mode="inference",
         device=device,
+        attention_backend="sdpa",
     )
     model.eval()
     status_queue.put(GPUWorkerReady(worker_id, str(device)))

@@ -2,7 +2,6 @@
 Model loading utilities for UniMeth.
 """
 import torch
-import warnings
 
 from unimeth.model.unimeth import UniMeth
 from unimeth.config.model_config import ModelConfig
@@ -13,6 +12,7 @@ def load_model(
     model_path=None,
     mode='inference',
     device=None,
+    attention_backend=None,
     **model_kwargs
 ):
     """
@@ -24,6 +24,8 @@ def load_model(
         model_path: Path to checkpoint file (optional)
         mode: Model mode ('inference', 'finetune', 'pretrain', etc.)
         device: Target device (optional)
+        attention_backend: Optional attention implementation selected before
+                           constructing the underlying BART model.
         **model_kwargs: Additional arguments passed to model constructor (e.g., plant=True)
     
     Returns:
@@ -59,15 +61,17 @@ def load_model(
         raise TypeError(f"config must be ModelConfig, str, or None, got {type(config)}")
     
     # Create model
-    model = UniMeth(mode=mode, config=config.to_dict(), **model_kwargs)
+    model = UniMeth(
+        mode=mode,
+        config=config.to_dict(),
+        attention_backend=attention_backend,
+        **model_kwargs,
+    )
     
     # Load weights if provided
     if model_path is not None:
         model = _load_checkpoint(model, model_path)
     
-    # Enable SDPA (built into torch>=2.0, works on all hardware)
-    model = _enable_sdpa(model)
-
     # Move to device
     if device is not None:
         model = model.to(device)
@@ -78,15 +82,4 @@ def _load_checkpoint(model, checkpoint_path):
     """Load checkpoint weights into model."""
     state_dict = torch.load(checkpoint_path, map_location='cpu')
     model.load_state_dict(state_dict, strict=True)
-    return model
-
-
-def _enable_sdpa(model):
-    """Enable PyTorch SDPA attention (uses Flash Attention kernel on compatible GPUs, math fallback elsewhere).
-
-    Uses _attn_implementation="sdpa" instead of "flash_attention_2" because HuggingFace's
-    Flash Attention 2 unpadding does not correctly handle encoder padding masks when
-    inputs_embeds is used, causing incorrect cross-attention in the decoder.
-    """
-    model.encoder_decoder.config._attn_implementation = "sdpa"
     return model
