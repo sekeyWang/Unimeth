@@ -1,6 +1,11 @@
 Changelog
 =========
 
+v0.3.1
+------
+- Improve inference data prefetching and throughput
+- Reduce progress reporting overhead
+
 v0.3.0
 ------
 - Switch inference to BAM-primary streaming
