@@ -1,12 +1,11 @@
 """
 Inference script for UniMeth.
 
-Supports TSV and BAM output formats.
-Each GPU processes data independently (no inter-rank synchronization)
-for maximum throughput.
+Supports TSV and BAM output formats. One invocation automatically uses all
+GPUs visible through CUDA_VISIBLE_DEVICES.
 
 Example usage:
-    accelerate launch -m unimeth.inference \
+    unimeth infer \
         --pod5_dir <path_to_pod5> \
         --bam_dir <path_to_bam> \
         --model_dir <finetuned_model_path> \
@@ -30,7 +29,7 @@ logging.getLogger('transformers.models.bart.modeling_bart').setLevel(logging.ERR
 
 from unimeth.config import create_argument_parser, merge_with_default_config, defaultconfig
 from unimeth.config.model_config import ModelConfig
-from unimeth.utils import local_print
+from unimeth.inference.logging_utils import configure_inference_logging
 
 POD5_SUFFIXES = ('.pod5',)
 SLOW5_SUFFIXES = ('.slow5', '.blow5')
@@ -45,16 +44,44 @@ def get_model_info(args):
 def format_inference_args(args):
     """Format inference arguments for readable output."""
     d_model, num_layers, cnn_stride = get_model_info(args)
+    import torch
+    from unimeth.inference.multiprocess_pipeline import resolve_pipeline_layout
 
+    gpu_count = torch.cuda.device_count()
+    raw_workers = getattr(args, 'num_workers', None)
+    configured_workers = (
+        None
+        if getattr(args, 'num_workers_auto', raw_workers is None)
+        else int(raw_workers)
+    )
+    pipeline_layout = resolve_pipeline_layout(configured_workers, gpu_count)
+    compute_label = (
+        f'{gpu_count} {"GPU" if gpu_count == 1 else "GPUs"}'
+        if gpu_count
+        else 'CPU'
+    )
+
+    output_items = [('Format', args.output_format)]
+    if args.output_format in ('bam', 'both'):
+        output_items.extend([
+            ('BAM Output', args.bam_out_dir or args.out_dir),
+            ('Keep mv', 'yes' if args.keep_mv else 'no'),
+        ])
+    if args.output_format in ('tsv', 'both'):
+        tsv_output = args.tsv_out_dir or args.out_dir
+        gzip_tsv = args.gzip or str(tsv_output).lower().endswith('.gz')
+        output_items.extend([
+            ('TSV Output', tsv_output),
+            ('Gzip TSV', 'yes' if gzip_tsv else 'no'),
+        ])
     sections = {
-        'Input/Output': [
+        'Input': [
             ('Signal', args.signal_dir),
             ('Signal Format', args.signal_format),
             ('BAM', args.bam_dir),
             ('Model', args.model_dir),
-            ('Output', args.out_dir),
-            ('Format', args.output_format),
         ],
+        'Output': output_items,
         'Model Config': [
             ('Type', args.model_type),
             ('d_model', d_model),
@@ -66,6 +93,7 @@ def format_inference_args(args):
             ('Pore Type', args.pore_type),
             ('Frequency', args.frequency),
             ('Dorado Ver', args.dorado_version),
+            ('Dorado Source', getattr(args, 'dorado_version_source', 'configured')),
         ],
         'Methylation': [
             ('CpG', 'yes' if args.cpg else 'no'),
@@ -75,9 +103,26 @@ def format_inference_args(args):
         ],
         'Processing': [
             ('Batch Size', args.batch_size),
-            ('Workers', args.num_workers),
-            *([('Bins', args.num_bins), ('Max Bin Length', args.max_bin_length)] if args.use_binning else []),
+            ('Compute', compute_label),
+            ('Feature Workers',
+             f'{pipeline_layout.feature_workers} total '
+             f'({"auto" if pipeline_layout.is_auto else "configured"})'),
+            ('BAM Threads',
+             f'{pipeline_layout.bam_read_threads} read + '
+             f'{pipeline_layout.bam_write_threads} write; '
+             f'{pipeline_layout.bam_finalize_threads} finalize'),
+            ('Processes',
+             f'{pipeline_layout.total_processes} total (including main)'),
             ('Use Binning', 'yes' if args.use_binning else 'no'),
+            *([('Max Bin Length', args.max_bin_length)] if args.use_binning else []),
+        ],
+        'BAM Filtering (aligned mode only)': [
+            ('Mode', args.bam_mode),
+            ('Chromosomes', args.chr),
+            ('MAPQ >=', args.mapq_thres),
+            ('Identity >=', args.identity_thres),
+            ('Unmapped', 'skip' if args.skip_unmapped else 'keep'),
+            ('Supplementary', 'keep' if args.include_supplementary else 'skip'),
         ],
     }
 
@@ -107,28 +152,83 @@ def normalize_signal_input(args, parser):
         args.signal_suffixes = POD5_SUFFIXES
     args.signal_label = args.signal_format
 
-    # Keep the legacy internal field populated until dataset names are cleaned up.
-    args.pod5_dir = args.signal_dir
+    return args
+
+
+def resolve_dorado_version(args, parser, detector=None):
+    """Resolve the inference Dorado version from CLI, BAM header, or fallback."""
+    if getattr(args, 'dorado_version', None) is not None:
+        args.dorado_version_source = 'command line'
+        return args
+
+    fallback_version = str(defaultconfig['dorado_version'])
+    bam_path = getattr(args, 'bam_dir', None)
+    if not bam_path:
+        args.dorado_version = fallback_version
+        args.dorado_version_source = 'default (no BAM input)'
+        return args
+
+    if detector is None:
+        from unimeth.inference.bam_metadata import detect_dorado_version_from_bam
+        detector = detect_dorado_version_from_bam
+
+    try:
+        detected_version = detector(bam_path)
+    except (OSError, ValueError) as exc:
+        parser.error(
+            f"Could not auto-detect Dorado version from BAM header: {exc}. "
+            "Pass --dorado_version major.minor.patch to override auto-detection."
+        )
+
+    if detected_version is None:
+        args.dorado_version = fallback_version
+        args.dorado_version_source = 'default (not found in BAM header)'
+    else:
+        args.dorado_version = detected_version
+        args.dorado_version_source = 'BAM header (auto-detected)'
     return args
 
 
 def main():
+    logger = configure_inference_logging()
     parser = create_argument_parser('inference')
     if parser.prog.endswith('__main__.py'):
         parser.prog = 'python -m unimeth.inference'
     args = parser.parse_args()
 
+    num_workers_auto = args.num_workers is None
+    args = resolve_dorado_version(args, parser)
     args = merge_with_default_config(args, defaultconfig)
+    args.num_workers_auto = num_workers_auto
     args.mode = 'inference'
     args = normalize_signal_input(args, parser)
 
-    local_print(format_inference_args(args))
+    logger.info(format_inference_args(args))
 
-    from unimeth.model.datasets import Pod5BamDataset
     from unimeth.inference.engine import InferenceEngine
+    from unimeth.ioutils.reader.signal_index import (
+        SignalIndexReadError,
+        SignalIndexWriteError,
+    )
 
-    engine = InferenceEngine(args, Pod5BamDataset)
-    engine.run(output_format=args.output_format)
+    engine = InferenceEngine(args)
+    try:
+        engine.run(output_format=args.output_format)
+    except SignalIndexWriteError as exc:
+        logger.error(
+            "\nCannot create the signal route index.\n\n"
+            "%s\n\n"
+            "Specify a writable index location and run again:\n"
+            "  --signal_index /path/to/unimeth-signal-index.sqlite",
+            exc,
+        )
+        raise SystemExit(1) from None
+    except SignalIndexReadError as exc:
+        logger.error(
+            "\nCannot prepare the signal read index.\n\n%s",
+            exc,
+        )
+        raise SystemExit(1) from None
 
 
 if __name__ == '__main__':

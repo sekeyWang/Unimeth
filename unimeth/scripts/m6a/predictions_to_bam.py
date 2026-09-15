@@ -70,7 +70,7 @@ def convert_results_to_bam(
             if len(positions) == 0:
                 continue
             
-            MM_tag, ML_tag = get_MM_ML(positions, scores, mod_name='A+a,')
+            MM_tag, ML_tag = get_MM_ML(positions, scores, mod_name='A+a?,')
             
             if len(ML_tag) == 0:
                 continue

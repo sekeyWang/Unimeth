@@ -41,8 +41,6 @@ conda activate unimeth
 pip install .
 ```
 
-For an editable development installation, use `pip install -e .` instead.
-
 For SLOW5/BLOW5 input, install `pyslow5` separately with `pip install pyslow5`, or install the optional pip extra with `pip install ".[slow5]"`.
 
 ### Option 2. Install with Conda and pip
@@ -113,7 +111,7 @@ dorado basecaller --device cuda:all --recursive --emit-moves \
 
 ### 3. Methylation Calling with Unimeth
 
-Run Unimeth to detect methylation. Use `unimeth infer` for single-process inference. For multi-GPU inference, launch the same module with `accelerate launch -m unimeth.inference`.
+Run Unimeth to detect methylation. A single `unimeth infer` invocation automatically uses all visible GPUs; restrict them with `CUDA_VISIBLE_DEVICES` when needed.
 
 ```bash
 # modBAM output (default)
@@ -123,6 +121,8 @@ unimeth infer \
 --model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
 --out results/arab.bam \
 --cpg 1 \
+--chg 1 \
+--chh 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
 --frequency 5khz
@@ -146,10 +146,9 @@ unimeth infer \
 
 Notes:
 
-- The examples use `--batch_size 256` for conservative demo memory usage. If omitted, the current default is `512`.
+- The default inference batch size is `256`; reduce `--batch_size` on GPUs with less available memory.
 - To generate TSV and modBAM together, use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam`.
 - For SLOW5/BLOW5 input, use `--slow5 reads.slow5` or `--slow5 reads.blow5` instead of `--pod5`.
-- For long-running BAM/modBAM inference, use `--resume`. It keeps completed-read checkpoints after Ctrl+C or `kill PID`; TSV resume is not recommended because partial records may be duplicated.
 
 #### Output
 

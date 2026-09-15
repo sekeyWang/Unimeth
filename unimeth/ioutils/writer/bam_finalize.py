@@ -2,7 +2,6 @@
 Finalize BAM part files produced during inference.
 """
 import os
-import re
 from pathlib import Path
 
 
@@ -33,73 +32,49 @@ def merged_unsorted_path(bam_path: str | Path) -> Path:
     return path.with_name(f"{path.stem}.merged_unsorted{path.suffix}")
 
 
-def _resume_part_sort_key(part_file: str | Path) -> tuple[int, str]:
-    """Sort base parts before numbered resume attempts."""
-    path = Path(part_file)
-    match = re.search(r"_resume(\d+)$", path.stem)
-    attempt = int(match.group(1)) if match else -1
-    return attempt, path.name
+def bam_sorting_path(bam_path: str | Path) -> Path:
+    """Return the visible temporary path used while sorting a streamed BAM."""
+    path = normalize_bam_path(bam_path)
+    return path.with_name(f"{path.stem}.unimeth-sorting{path.suffix}")
 
 
-def selected_bam_part_path(part_file: str | Path) -> Path:
-    """Return a temporary part path used for resume-safe finalization."""
-    path = Path(part_file)
-    return path.with_name(f".{path.stem}.completed{path.suffix}")
-
-
-def _select_bam_records(
-    part_files: list[str],
-    completed_read_ids: set[str] | None = None,
-) -> list[str]:
-    """Keep one latest BAM record per read across attempts."""
+def finalize_single_bam(
+    bam_path: str,
+    work_path: str,
+    threads: int = 8,
+    sort_and_index: bool = True,
+    index_threads: int | None = None,
+) -> None:
+    """Finalize the sole writer's BAM stream without merging rank parts."""
     import pysam
 
-    selected_paths = []
-    selected_read_ids = set()
-    for part_file in sorted(part_files, key=_resume_part_sort_key, reverse=True):
-        selected_path = selected_bam_part_path(part_file)
-        wrote_record = False
-        with pysam.AlignmentFile(part_file, "rb", check_sq=False) as input_bam:
-            with pysam.AlignmentFile(str(selected_path), "wb", template=input_bam) as output_bam:
-                for bam_read in input_bam:
-                    read_id = bam_read.query_name
-                    if (
-                        read_id in selected_read_ids
-                        or (
-                            completed_read_ids is not None
-                            and read_id not in completed_read_ids
-                        )
-                    ):
-                        continue
-                    output_bam.write(bam_read)
-                    selected_read_ids.add(read_id)
-                    wrote_record = True
-        if wrote_record:
-            selected_paths.append(str(selected_path))
-        elif selected_path.exists():
-            selected_path.unlink()
-    return selected_paths
-
-
-def select_completed_bam_records(
-    part_files: list[str],
-    completed_read_ids: set[str],
-) -> list[str]:
-    """Keep one latest BAM record for each checkpointed read across attempts."""
-    return _select_bam_records(part_files, completed_read_ids)
-
-
-def select_latest_bam_records(part_files: list[str]) -> list[str]:
-    """Keep one latest BAM record for every emitted read across attempts."""
-    return _select_bam_records(part_files)
-
-
-def bam_has_references(bam_path: str) -> bool:
-    """Return whether a BAM header contains reference sequences."""
-    import pysam
-
-    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam_file:
-        return bam_file.nreferences > 0
+    final_path = normalize_bam_path(bam_path)
+    threads = max(1, int(threads or 1))
+    if sort_and_index:
+        work_path = Path(work_path)
+        if work_path.resolve() == final_path.resolve():
+            sorting_path = bam_sorting_path(final_path)
+            if sorting_path.exists():
+                sorting_path.unlink()
+            pysam.sort(
+                "-@",
+                str(threads),
+                "-o",
+                str(sorting_path),
+                str(work_path),
+            )
+            os.replace(sorting_path, final_path)
+        else:
+            pysam.sort("-@", str(threads), "-o", str(final_path), str(work_path))
+            os.remove(work_path)
+        if index_threads is None:
+            pysam.index(str(final_path))
+        else:
+            index_threads = max(1, min(threads, int(index_threads or 1)))
+            pysam.index("-@", str(index_threads), str(final_path))
+        return
+    if Path(work_path).resolve() != final_path.resolve():
+        os.replace(work_path, final_path)
 
 
 def finalize_part_bams(
@@ -115,9 +90,15 @@ def finalize_part_bams(
     import pysam
 
     final_path = normalize_bam_path(bam_path)
+    threads = max(1, int(threads or 1))
 
     if len(part_files) == 1:
-        os.rename(part_files[0], final_path)
+        finalize_single_bam(
+            str(final_path),
+            part_files[0],
+            threads=threads,
+            sort_and_index=sort_and_index,
+        )
     else:
         if sort_and_index:
             merged_unsorted = merged_unsorted_path(final_path)
@@ -129,5 +110,5 @@ def finalize_part_bams(
         for part_file in part_files:
             os.remove(part_file)
 
-    if sort_and_index:
+    if sort_and_index and len(part_files) > 1:
         pysam.index(str(final_path))

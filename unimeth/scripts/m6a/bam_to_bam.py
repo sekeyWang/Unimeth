@@ -169,7 +169,7 @@ def process_bam_worker(
                 continue
             
             # Generate MM/ML tags
-            mod_name = 'A+a,' if mod_type == 'm6A' else 'C+m,'
+            mod_name = 'A+a?,' if mod_type == 'm6A' else 'C+m?,'
             MM_tag, ML_tag = get_MM_ML(positions, scores, mod_name=mod_name)
             
             bam_read.set_tag(tag="MM", value=MM_tag, value_type="Z")

@@ -77,7 +77,7 @@ def get_modifications(bam_read, mod_key: Tuple) -> Dict[int, int]:
 def get_MM_ML(
     positions: List[int],
     scores: List[float],
-    mod_name: str = 'C+m,'
+    mod_name: str = 'C+m?,'
 ) -> Tuple[str, array]:
     """
     Generate MM and ML tags for a read.
@@ -85,7 +85,7 @@ def get_MM_ML(
     Args:
         positions: List of positions (0-indexed) with modification signal
         scores: List of methylation scores (0-100) corresponding to positions
-        mod_name: Modification name for MM tag (default: 'C+m,')
+        mod_name: Modification name for MM tag (default: 'C+m?,')
 
     Returns:
         Tuple of (MM_tag_string, ML_tag_array)
@@ -116,7 +116,7 @@ def get_MM_ML(
 
 
 def write_mm_ml_tags(bam_read, positions: List[int], scores: List[float],
-                     mod_name: str = 'C+m,') -> bool:
+                     mod_name: str = 'C+m?,') -> bool:
     """
     Generate and set MM/ML tags on a BAM read.
 

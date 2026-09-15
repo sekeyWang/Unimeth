@@ -45,8 +45,11 @@ class FakeRead:
 
 
 def load_bam_aggregation_module():
-    module_path = Path(__file__).resolve().parents[1] / "unimeth" / "ioutils" / "writer" / "bam_aggregation.py"
-    bam_tags_path = Path(__file__).resolve().parents[1] / "unimeth" / "utils" / "bam_tags.py"
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    module_path = repo_root / "unimeth" / "ioutils" / "writer" / "bam_aggregation.py"
+    bam_tags_path = repo_root / "unimeth" / "utils" / "bam_tags.py"
     bam_tags_spec = importlib.util.spec_from_file_location("unimeth.utils.bam_tags", bam_tags_path)
     bam_tags_module = importlib.util.module_from_spec(bam_tags_spec)
     bam_tags_spec.loader.exec_module(bam_tags_module)
@@ -76,6 +79,13 @@ def load_bam_aggregation_module():
     return module
 
 
+def make_record_reader(read):
+    return SimpleNamespace(
+        get_record=lambda output_record_key: read,
+        close=lambda: None,
+    )
+
+
 class BamAggregationMvTagTest(unittest.TestCase):
     def test_writer_removes_mv_tag_by_default(self):
         module = load_bam_aggregation_module()
@@ -83,10 +93,11 @@ class BamAggregationMvTagTest(unittest.TestCase):
         writer = module.AggregationBAMWriter(
             output_path="out.bam",
             template_bam_path="in.bam",
-            bam_reader=SimpleNamespace(get_read_by_id=lambda read_id: [read]),
+            record_reader=make_record_reader(read),
         )
         buf = SimpleNamespace(
             read_id="read1",
+            output_record_key=123,
             received={
                 0: [
                     module.PatchPrediction(
@@ -114,11 +125,12 @@ class BamAggregationMvTagTest(unittest.TestCase):
         writer = module.AggregationBAMWriter(
             output_path="out.bam",
             template_bam_path="in.bam",
-            bam_reader=SimpleNamespace(get_read_by_id=lambda read_id: [read]),
+            record_reader=make_record_reader(read),
             keep_mv=True,
         )
         buf = SimpleNamespace(
             read_id="read1",
+            output_record_key=123,
             received={
                 0: [
                     module.PatchPrediction(
@@ -139,6 +151,73 @@ class BamAggregationMvTagTest(unittest.TestCase):
         self.assertIn("mv", read.tags)
         self.assertIn("MM", read.tags)
         self.assertEqual(FakeAlignmentFile.output.written, [read])
+
+    def test_exit_with_exception_discards_buffer_without_writing_partial_reads(self):
+        module = load_bam_aggregation_module()
+        writer = module.AggregationBAMWriter(
+            output_path="out.bam",
+            template_bam_path="in.bam",
+            record_reader=make_record_reader(FakeRead()),
+        )
+        buf = module.ReadBuffer(
+            read_id="read1",
+            expected=2,
+            output_record_key=123,
+        )
+        buf.received[0].append(
+            module.PatchPrediction(
+                prob=0.9,
+                methy_type="[CpG]",
+                read_pos=1,
+                ref_pos=10,
+                chr="chr1",
+                strand="+",
+                patch_idx=0,
+            )
+        )
+        writer.buffer["read1"] = buf
+        write_calls = []
+        writer._write_read_to_bam = lambda remaining_buf: write_calls.append(remaining_buf.read_id)
+
+        suppressed = writer.__exit__(RuntimeError, RuntimeError("boom"), None)
+
+        self.assertFalse(suppressed)
+        self.assertEqual(write_calls, [])
+        self.assertEqual(writer.buffer, {})
+        self.assertEqual(writer.stats["reads_discarded_on_error"], 1)
+
+    def test_exit_without_exception_flushes_remaining_buffer(self):
+        module = load_bam_aggregation_module()
+        writer = module.AggregationBAMWriter(
+            output_path="out.bam",
+            template_bam_path="in.bam",
+            record_reader=make_record_reader(FakeRead()),
+        )
+        buf = module.ReadBuffer(
+            read_id="read1",
+            expected=1,
+            output_record_key=123,
+        )
+        buf.received[0].append(
+            module.PatchPrediction(
+                prob=0.9,
+                methy_type="[CpG]",
+                read_pos=1,
+                ref_pos=10,
+                chr="chr1",
+                strand="+",
+                patch_idx=0,
+            )
+        )
+        writer.buffer["read1"] = buf
+        write_calls = []
+        writer._write_read_to_bam = lambda remaining_buf: write_calls.append(remaining_buf.read_id)
+
+        suppressed = writer.__exit__(None, None, None)
+
+        self.assertFalse(suppressed)
+        self.assertEqual(write_calls, ["read1"])
+        self.assertEqual(writer.buffer, {})
 
 
 if __name__ == "__main__":

@@ -16,14 +16,30 @@ def load_bam_finalize_module():
 
 
 class BamFinalizeTest(unittest.TestCase):
-    def test_inference_engine_finalization_does_not_call_external_samtools(self):
-        engine_path = Path(__file__).resolve().parents[1] / "unimeth" / "inference" / "engine.py"
-        source = engine_path.read_text(encoding="utf-8")
+    def test_bam_rank_path_matches_tsv_rank_suffix(self):
+        bam_finalize = load_bam_finalize_module()
 
-        self.assertIn("finalize_part_bams", source)
-        self.assertNotIn("samtools", source)
-        self.assertNotIn("subprocess", source)
-        self.assertNotIn("# from unimeth.ioutils.writer.bam_aggregation", source)
+        self.assertEqual(
+            bam_finalize.bam_part_path(Path("calls.bam"), 0),
+            Path("calls_rank0.bam"),
+        )
+        self.assertEqual(
+            bam_finalize.bam_part_glob(Path("calls.bam")),
+            "calls_rank*.bam",
+        )
+
+    def test_inference_pipeline_finalization_does_not_call_external_samtools(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        pipeline_source = (
+            repo_root / "unimeth" / "inference" / "multiprocess_pipeline.py"
+        ).read_text(encoding="utf-8")
+        finalize_source = (
+            repo_root / "unimeth" / "ioutils" / "writer" / "bam_finalize.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("finalize_single_bam", pipeline_source)
+        self.assertNotIn("subprocess", pipeline_source)
+        self.assertNotIn("subprocess", finalize_source)
 
     def test_single_part_bam_is_renamed_and_indexed_with_pysam(self):
         calls = []
@@ -31,14 +47,18 @@ class BamFinalizeTest(unittest.TestCase):
         def fake_index(*args):
             calls.append(("index", args))
 
-        fake_pysam = SimpleNamespace(index=fake_index)
+        def fake_sort(*args):
+            calls.append(("sort", args))
+            Path(args[3]).write_bytes(b"sorted")
+
+        fake_pysam = SimpleNamespace(sort=fake_sort, index=fake_index)
 
         with patch.dict(sys.modules, {"pysam": fake_pysam}):
             finalize_part_bams = load_bam_finalize_module().finalize_part_bams
 
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
-                part = tmp_path / "calls.part_0.bam"
+                part = tmp_path / "calls_rank0.bam"
                 final = tmp_path / "calls.bam"
                 part.write_bytes(b"bam")
 
@@ -46,7 +66,13 @@ class BamFinalizeTest(unittest.TestCase):
 
                 self.assertTrue(final.exists())
                 self.assertFalse(part.exists())
-                self.assertEqual(calls, [("index", (str(final),))])
+                self.assertEqual(
+                    calls,
+                    [
+                        ("sort", ("-@", "8", "-o", str(final), str(part))),
+                        ("index", (str(final),)),
+                    ],
+                )
 
     def test_multiple_part_bams_are_merged_sorted_indexed_and_removed_with_pysam(self):
         calls = []
@@ -74,8 +100,8 @@ class BamFinalizeTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
                 parts = [
-                    tmp_path / "calls.part_0.bam",
-                    tmp_path / "calls.part_1.bam",
+                    tmp_path / "calls_rank0.bam",
+                    tmp_path / "calls_rank1.bam",
                 ]
                 for part in parts:
                     part.write_bytes(b"bam")
@@ -133,8 +159,8 @@ class BamFinalizeTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
                 parts = [
-                    tmp_path / "calls.part_0.bam",
-                    tmp_path / "calls.part_1.bam",
+                    tmp_path / "calls_rank0.bam",
+                    tmp_path / "calls_rank1.bam",
                 ]
                 for part in parts:
                     part.write_bytes(b"bam")
@@ -192,8 +218,8 @@ class BamFinalizeTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
                 parts = [
-                    tmp_path / "calls.part_0.bam",
-                    tmp_path / "calls.part_1.bam",
+                    tmp_path / "calls_rank0.bam",
+                    tmp_path / "calls_rank1.bam",
                 ]
                 for part in parts:
                     part.write_bytes(b"bam")

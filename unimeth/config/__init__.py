@@ -15,7 +15,7 @@ from .model_config import (
     METHYLATION_TOKENS,    # Methylation token IDs
     METHYLATION_LABELS,    # Label token IDs (+/-)
 )
-from .args_config import create_argument_parser, merge_with_default_config
+from .args_config import create_argument_parser, merge_with_default_config, parse_dorado_version
 
 # =============================================================================
 # Default instances and backward compatibility aliases
@@ -85,5 +85,6 @@ __all__ = [
     # Functions
     'create_argument_parser',
     'merge_with_default_config',
+    'parse_dorado_version',
     'get_total_stride',
 ]
