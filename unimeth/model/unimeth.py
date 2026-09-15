@@ -15,8 +15,15 @@ class UniMeth(nn.Module):
         mode: 'pretrain', 'finetune', 'inference', or 'distillation'
         plant: Use plant-specific unbalanced loss
         config: Model configuration dict (default: default_modelconfig)
+        attention_backend: Optional BART attention implementation override.
     """
-    def __init__(self, mode, plant=False, config=default_modelconfig):
+    def __init__(
+            self,
+            mode,
+            plant=False,
+            config=default_modelconfig,
+            attention_backend=None,
+            ):
         super().__init__()
         self.config = config
         
@@ -30,6 +37,8 @@ class UniMeth(nn.Module):
         
         # BART encoder-decoder
         bart_config = BartConfig(**config)
+        if attention_backend is not None:
+            bart_config._attn_implementation = attention_backend
         self.encoder_decoder = BartForConditionalGeneration(bart_config)
         
         self.entropy_loss = CrossEntropyLoss(reduction='none')

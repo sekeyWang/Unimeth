@@ -146,7 +146,7 @@ unimeth infer \
 
 Notes:
 
-- The examples use `--batch_size 256` for conservative demo memory usage. If omitted, the current default is `512`.
+- The default inference batch size is `256`; reduce `--batch_size` on GPUs with less available memory.
 - To generate TSV and modBAM together, use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam`.
 - For SLOW5/BLOW5 input, use `--slow5 reads.slow5` or `--slow5 reads.blow5` instead of `--pod5`.
 
