@@ -54,7 +54,7 @@ conda create -y -n unimeth \
   --override-channels --strict-channel-priority \
   python=3.12 pip \
   "pytorch=2.5.1=cuda126*" \
-  accelerate transformers numpy tqdm pysam scikit-learn scipy
+  accelerate transformers numpy tqdm pysam scikit-learn scipy packaging
 
 conda activate unimeth
 
