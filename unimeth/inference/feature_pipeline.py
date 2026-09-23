@@ -2,12 +2,127 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, fields
 from queue import Empty
 from typing import Any, Iterable
 
 
 _QUEUE_POLL_SECONDS = 0.1
+_NORMALIZATION_CHECK_READS = 20
+_NORMALIZATION_MEAN_LIMIT = 5.0
+_NORMALIZATION_STD_MIN = 0.1
+_NORMALIZATION_STD_MAX = 10.0
+_NORMALIZATION_MAX_PATCHES_PER_READ = 32
+_NORMALIZATION_MAX_SIGNAL_VALUES_PER_READ = 65_536
+
+
+@dataclass(frozen=True)
+class NormalizationCheckResult:
+    """Worker-local summary of normalized model-input signals."""
+
+    worker_id: int
+    read_count: int
+    median_mean: float
+    median_std: float
+    has_non_finite_stats: bool = False
+
+    @property
+    def is_suspicious(self) -> bool:
+        return (
+            self.has_non_finite_stats
+            or not math.isfinite(self.median_mean)
+            or not math.isfinite(self.median_std)
+            or abs(self.median_mean) > _NORMALIZATION_MEAN_LIMIT
+            or self.median_std < _NORMALIZATION_STD_MIN
+            or self.median_std > _NORMALIZATION_STD_MAX
+        )
+
+
+class NormalizationCheckSampler:
+    """Inspect a bounded sample of the first model-ready reads in one worker."""
+
+    def __init__(
+        self,
+        worker_id: int,
+        read_target: int = _NORMALIZATION_CHECK_READS,
+        max_patches_per_read: int = _NORMALIZATION_MAX_PATCHES_PER_READ,
+        max_signal_values_per_read: int = _NORMALIZATION_MAX_SIGNAL_VALUES_PER_READ,
+    ):
+        self.worker_id = worker_id
+        self.read_target = read_target
+        self.max_patches_per_read = max_patches_per_read
+        self.max_signal_values_per_read = max_signal_values_per_read
+        self._read_means: list[float] = []
+        self._read_stds: list[float] = []
+        self._has_non_finite_stats = False
+        self._reported = False
+
+    def _read_stats(self, patches: Iterable[dict]) -> tuple[float, float] | None:
+        import numpy as np
+
+        sampled_values = []
+        sampled_count = 0
+        for patch_index, patch in enumerate(patches):
+            if patch_index >= self.max_patches_per_read:
+                break
+            remaining = self.max_signal_values_per_read - sampled_count
+            if remaining <= 0:
+                break
+            try:
+                values = np.asarray(
+                    patch.get("signals", ()),
+                    dtype=np.float64,
+                ).reshape(-1)
+            except Exception:
+                continue
+            if values.size == 0:
+                continue
+            selected = values[:remaining]
+            sampled_values.append(selected)
+            sampled_count += int(selected.size)
+
+        if not sampled_values:
+            return None
+        values = (
+            sampled_values[0]
+            if len(sampled_values) == 1
+            else np.concatenate(sampled_values)
+        )
+        with np.errstate(all="ignore"):
+            return float(np.mean(values)), float(np.std(values))
+
+    def observe(
+        self,
+        patches: Iterable[dict],
+    ) -> NormalizationCheckResult | None:
+        if self._reported:
+            return None
+        try:
+            stats = self._read_stats(patches)
+        except Exception:
+            return None
+        if stats is None:
+            return None
+
+        read_mean, read_std = stats
+        self._read_means.append(read_mean)
+        self._read_stds.append(read_std)
+        if not math.isfinite(read_mean) or not math.isfinite(read_std):
+            self._has_non_finite_stats = True
+        if len(self._read_means) < self.read_target:
+            return None
+
+        import numpy as np
+
+        self._reported = True
+        return NormalizationCheckResult(
+            worker_id=self.worker_id,
+            read_count=len(self._read_means),
+            median_mean=float(np.median(self._read_means)),
+            median_std=float(np.median(self._read_stds)),
+            has_non_finite_stats=self._has_non_finite_stats,
+        )
 
 
 @dataclass(frozen=True)
