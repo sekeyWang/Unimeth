@@ -14,11 +14,17 @@ from .sites import get_methy_type
 
 
 DORADO_NORMALIZATION_BOUNDARY = Version('0.7.1')
+DORADO_PA_TAGS_BOUNDARY = Version('0.9.2')
 
 
 @lru_cache(maxsize=8)
 def _uses_legacy_dorado_normalization(dorado_version: str) -> bool:
     return Version(dorado_version) <= DORADO_NORMALIZATION_BOUNDARY
+
+
+@lru_cache(maxsize=8)
+def _uses_pa_bam_tag_coordinates(dorado_version: str) -> bool:
+    return Version(dorado_version) >= DORADO_PA_TAGS_BOUNDARY
 
 
 def weight_bis(num):
@@ -41,14 +47,17 @@ def get_norm_params(feature, frequency, dorado_version):
     shift_dacs_to_pa, scale_dacs_to_pa = feature['shift_dacs_to_pa'], feature['scale_dacs_to_pa']
     shift_pa_to_norm, scale_pa_to_norm = feature['shift_pa_to_norm'], feature['scale_pa_to_norm']
     
-    if frequency == '5khz':
-        if _uses_legacy_dorado_normalization(str(dorado_version)):
-            shift = 1 - shift_pa_to_norm
-            scale = 1 / scale_pa_to_norm
-        else:
-            shift = shift_pa_to_norm
-            scale = scale_pa_to_norm
+    dorado_version = str(dorado_version)
+    if frequency == '5khz' and _uses_legacy_dorado_normalization(dorado_version):
+        # Dorado <= 0.7.1 uses the legacy 5 kHz tag convention.
+        shift = 1 - shift_pa_to_norm
+        scale = 1 / scale_pa_to_norm
+    elif frequency == '5khz' and not _uses_pa_bam_tag_coordinates(dorado_version):
+        # Dorado 0.7.2-0.9.1 stores sm/sd in raw DAC coordinates.
+        shift = shift_pa_to_norm
+        scale = scale_pa_to_norm
     else:
+        # Dorado >= 0.9.2 stores sm/sd in pA; 4 kHz already uses this conversion.
         shift = (shift_pa_to_norm / scale_dacs_to_pa) - shift_dacs_to_pa
         scale = scale_pa_to_norm / scale_dacs_to_pa
     
