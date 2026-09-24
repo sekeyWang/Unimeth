@@ -177,6 +177,8 @@ We provide pre-trained models for:
 
 Download models from the [Google Drive](https://drive.google.com/drive/folders/1f8bWVFmbPxL6WqukOUi_BufCEvpOHaxR) page.
 
+> **Dorado model compatibility:** The current R10.4.1 5 kHz models are primarily optimized and validated for reads basecalled with Dorado `dna_r10.4.1_e8.2_400bps_sup@v5.0.0`. Other Dorado basecalling models may work, but prediction accuracy and calibration can differ.
+
 ---
 
 <!--
@@ -232,3 +234,6 @@ This project is licensed under the BSD 3-Clause Clear License. See [LICENSE](LIC
 ## TODO
 - [ ] After the official POD5 Conda packages are fixed, update UniMeth's Conda package, dependencies, and installation instructions.
 - [ ] Create a new `envs/environment-gpu.yml` after the Conda installation path is working.
+- [ ] Module for methylation frequency calculation.
+- [ ] Make bam sorting and indexing optional.
+- [ ] Evaluate and improve compatibility with additional Dorado basecalling models.
