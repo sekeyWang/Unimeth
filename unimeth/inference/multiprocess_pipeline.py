@@ -21,6 +21,7 @@ from typing import Any
 
 from tqdm import tqdm
 
+from unimeth.inference.feature_pipeline import NormalizationCheckResult
 from unimeth.inference.progress import RecordCompletionTracker, format_compact_count
 
 
@@ -179,6 +180,31 @@ class FeatureWorkerDone:
     stats: dict[str, int]
     records_without_patches: int
     yielded_patches: int
+
+
+class NormalizationWarningReporter:
+    """Render at most one normalization warning in the main process."""
+
+    def __init__(self):
+        self._warning_emitted = False
+
+    def handle(self, message) -> None:
+        if (
+            self._warning_emitted
+            or not isinstance(message, NormalizationCheckResult)
+            or not message.is_suspicious
+        ):
+            return
+        logger.warning(
+            "Signal normalization may be incorrect: checked %s read(s), "
+            "observed median mean=%.4g and median std=%.4g. Verify "
+            "--dorado_version, --frequency, and that the BAM and "
+            "POD5/SLOW5 inputs match.",
+            message.read_count,
+            message.median_mean,
+            message.median_std,
+        )
+        self._warning_emitted = True
 
 
 @dataclass(frozen=True)
@@ -421,6 +447,7 @@ def _feature_worker_impl(
 
     from unimeth.inference.feature_pipeline import (
         BamFeatureBatchProcessor,
+        NormalizationCheckSampler,
         iter_record_batches,
     )
 
@@ -431,6 +458,7 @@ def _feature_worker_impl(
         args.signal_routing_plan,
         args,
     )
+    normalization_check = NormalizationCheckSampler(worker_id)
     records_without_patches = 0
     yielded_patches = 0
     try:
@@ -438,6 +466,11 @@ def _feature_worker_impl(
             bam_batch = tuple(item.restore(bam_header) for item in serialized_batch)
             for bundle in processor.process(bam_batch):
                 patches = tuple(bundle.patches)
+                if normalization_check is not None:
+                    normalization_result = normalization_check.observe(patches)
+                    if normalization_result is not None:
+                        status_queue.put(normalization_result)
+                        normalization_check = None
                 if patches:
                     yielded_patches += len(patches)
                 else:
@@ -1280,6 +1313,7 @@ class MultiprocessInferencePipeline:
             batcher_done = None
             inference_elapsed = None
             inference_logged = False
+            normalization_warning = NormalizationWarningReporter()
             try:
                 while writer_done is None:
                     try:
@@ -1293,6 +1327,7 @@ class MultiprocessInferencePipeline:
                         continue
                     if isinstance(message, PipelineFailure):
                         raise MultiprocessInferenceError(message)
+                    normalization_warning.handle(message)
                     collected_batcher = self._apply_status_message(
                         message,
                         reader_stats,
@@ -1365,6 +1400,7 @@ class MultiprocessInferencePipeline:
                     break
                 if isinstance(message, PipelineFailure):
                     raise MultiprocessInferenceError(message)
+                normalization_warning.handle(message)
                 collected_batcher = self._apply_status_message(
                     message,
                     reader_stats,

@@ -1,6 +1,11 @@
 Changelog
 =========
 
+v0.3.2
+------
+- Fix signal normalization for recent Dorado versions
+- Add a warning for abnormal normalized signals
+
 v0.3.1
 ------
 - Improve inference data prefetching and throughput
