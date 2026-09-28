@@ -167,38 +167,27 @@ Unimeth outputs read-level methylation calls in **TSV** or **modBAM** format. A 
 
 The TSV file can be further processed to generate site-level methylation frequencies using the provided `scripts/call_modification_frequency.py` script. It can also be converted to modBAM format using `scripts/generate_5mC_modbam_file.py` (5mC only).
 
-#### Site-level methylation frequencies from modBAM
+### 4. Methylation frequency calling
 
-Use an aligned, coordinate-sorted modBAM with a BAM index and the matching reference FASTA with a `.fai` index:
+Calculate site methylation frequencies from the modBAM produced above. The BAM must be coordinate-sorted and indexed, with a matching indexed reference FASTA.
 
 ```bash
-unimeth call_freq --input_bam results/reads.bam --ref reference.fa \
-    --output results/freq --sort --threads 4
+# Count the default modification types:
+unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
+    --output results/freq --sort
 
-# For a model that predicts only 5mCpG:
-unimeth call_freq --input_bam results/reads.bam --ref reference.fa \
-    --output results/cpg_freq --mod_types 5mCpG --sort
+# Count CpG only and combine its two strands:
+unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
+    --output results/cpg_freq --mod_types 5mCpG --combine_cpg --sort
 
-# Put all scored C positions in one file, keeping both strands separate:
-unimeth call_freq --input_bam results/reads.bam --ref reference.fa \
+# Count all C sites with predictions:
+unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
     --output results/all_c --mod_types 5mC --sort
-
-# Require each C call to also match the reference base on that strand:
-unimeth call_freq --input_bam results/reads.bam --ref reference.fa \
-    --output results/reference_c --mod_types 5mC --refsites_only --sort
 ```
 
-`--mod_types` accepts `5mC`, `5mCpG`, `5mCHG`, `5mCHH`, and `6mA`, separated by spaces. Legacy `CpG`, `CHG`, `CHH`, and `m6A` are accepted as aliases. Default selection remains the three reference contexts plus 6mA. The output is an 11-column bedMethyl file for each selected type, using the public names: `freq.5mCpG.bed`, `freq.5mCHG.bed`, `freq.5mCHH.bed`, and `freq.6mA.bed`. Selecting only `5mC` uses `PREFIX.5mC.bed` as the total output. Coordinates are zero-based, with one-base, half-open intervals. Column 10 is effective coverage; column 11 is methylation percentage rounded to an integer. Empty total outputs produce empty files. `--sort` orders by chromosome name and position; without it, chromosome order follows the BAM header. `--gzip` implies sorting, writes BGZF `.bed.gz` files, and adds `.csi` indexes.
-
-By default, reads with haplotype tag `HP=1` or `HP=2` also contribute to separate haplotype files. For example, selecting `5mCpG` produces `PREFIX.5mCpG.bed` and, when eligible sites exist, `PREFIX.5mCpG.hp1.bed` and `PREFIX.5mCpG.hp2.bed`. The total file includes all eligible reads, including those with missing, unparseable, or other haplotype values. Each group calculates its own coverage and frequency and applies `--prob_cf` and `--min_cov` independently. Use `--hap_tag XX` for a different BAM tag, or `--no_hap` for total output only. Haplotype files with no eligible site rows are omitted, including for TSV and compressed output. The same type and haplotype names are used for `.tsv` and `.gz` files.
-
-`--ref` is required for every selection. In all-C (`5mC`) mode, the default counts scored C positions in the read even when the aligned reference base differs, and includes positions whose context is unknown or touches a contig boundary. `--refsites_only` requires reference C on the positive strand or reference G on the negative strand. The same option requires A/T matches in `6mA` mode. Context-specific selections always use the reference CpG/CHG/CHH motif (H means A, C, or T).
-
-Counts follow [ccsmeth's count mode](https://github.com/PengNi/ccsmeth/blob/3c106e3427a9d57a44fe4e6905a0882b54678d65/ccsmeth/call_mods_freq_bam.py) with effective coverage: frequency is methylated / (methylated + unmethylated). Only explicit `C+m` or `A+a` predictions with ML probabilities are counted. Uncalled bases and calls failing `--prob_cf` are excluded from coverage. `--prob_cf` is the minimum difference between modified and unmodified probabilities, from 0 to 1; the default 0 retains all scored calls. ML bytes use ccsmeth's `ML / 256` convention (with its rounding), so ML=128 is called methylated. This probability quantization can change calls close to a threshold compared with the original inference TSV.
-
-All types retain separate strands, including CpG, with each call reported at its actual reference position. There is no strand-merging option. Unmapped, secondary, supplementary, duplicate, and QC-failed records are excluded; `--mapq` defaults to 1. `--min_cov` sets minimum effective coverage. `--contigs` restricts exact contig names, and `--chunk_len` controls region size for bounded memory use. Existing output files are not overwritten.
-
-For exact counts and a frequency with six decimal places, use `--output_format tsv`. Its columns are `chrom`, `position`, `strand`, `mod_type`, `coverage`, `methylated`, `unmethylated`, and `frequency`. This module does not require a model or GPU.
+- The default output is a bedMethyl file for each modification type, such as `results/freq.5mCpG.bed`.
+- Add `--combine_cpg` to combine CpG strands.
+- Reads with `HP=1` or `HP=2` also produce haplotype files when eligible sites exist. Use `--no_hap` for total output only.
 
 
 ## 🧪 Models

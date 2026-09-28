@@ -31,9 +31,12 @@ def _normalize_output_format(value):
     return "bed" if value == "bedmethyl" else value
 
 
-def _output_label(key):
+def _output_label(key, combine_cpg=False):
     kind, hap = key
-    return PUBLIC_FREQUENCY_TYPES[kind] + (f".hp{hap}" if hap else "")
+    label = PUBLIC_FREQUENCY_TYPES[kind]
+    if combine_cpg and kind == "CpG":
+        label += ".combined"
+    return label + (f".hp{hap}" if hap else "")
 
 
 def _haplotype(read, tag):
@@ -52,6 +55,7 @@ class CountOptions:
     mapq: int
     no_hap: bool = False
     hap_tag: str = "HP"
+    combine_cpg: bool = False
 
 
 def _probability(ml):
@@ -135,8 +139,11 @@ def _count_region(bam, reference, region, options):
     chrom_length = bam.get_reference_length(chrom)
     offset = max(0, start - 2)
     sequence = reference.fetch(chrom, offset, min(chrom_length, end + 2)).upper()
+    # A negative CpG call at end belongs to the C anchor at end-1. Reads
+    # starting on that G must be fetched even if they do not cover the C.
+    fetch_end = min(chrom_length, end + int(options.combine_cpg))
     counts = {}
-    for read in bam.fetch(chrom, start, end):
+    for read in bam.fetch(chrom, start, fetch_end):
         if (read.is_unmapped or read.is_secondary or read.is_supplementary
                 or read.is_duplicate or read.is_qcfail or read.mapping_quality < options.mapq):
             continue
@@ -157,7 +164,7 @@ def _count_region(bam, reference, region, options):
             if not 0 <= query_position < len(reference_positions):
                 raise ValueError(f"Read {read.query_name!r}: modification outside SEQ")
             position = reference_positions[query_position]
-            if position is None or not start <= position < end:
+            if position is None or not start <= position < fetch_end:
                 continue
             matches_reference = _reference_base_matches(sequence, offset, position, strand, base)
             if options.refsites_only and not matches_reference:
@@ -180,8 +187,16 @@ def _count_region(bam, reference, region, options):
             if abs(probability - (1 - probability)) < options.prob_cf:
                 continue
             for kind in kinds:
+                output_position, output_strand = position, strand
+                if options.combine_cpg and kind == "CpG":
+                    output_position -= int(read.is_reverse)
+                    output_strand = "+"
+                # Ownership follows this output's coordinate. Other types in
+                # the right overlap retain their own coordinates and region.
+                if not start <= output_position < end:
+                    continue
                 for group in groups:
-                    key = kind, position, strand, group
+                    key = kind, output_position, output_strand, group
                     values = counts.setdefault(key, [0, 0])
                     values[0] += 1
                     values[1] += int(probability > 0.5)
@@ -242,7 +257,7 @@ def _write_counts(handles, region, counts, min_cov, output_format):
         fraction = methylated / coverage
         if output_format == "bed":
             # ccsmeth's 11-column bedMethyl with one-base intervals. Both
-            # coverage columns agree; every type keeps the original strand.
+            # coverage columns agree. Combined CpG uses the positive C anchor.
             fields = (chrom, position, position + 1, ".", coverage, strand,
                       position, position + 1, "0,0,0", coverage,
                       int(round(fraction * 100 + 0.001)))
@@ -258,7 +273,8 @@ def _write_counts(handles, region, counts, min_cov, output_format):
 def call_frequency(input_bam, reference, output_prefix, *, mod_types=DEFAULT_FREQUENCY_TYPES,
                    prob_cf=0.0, refsites_only=False, mapq=1, min_cov=1, threads=4,
                    chunk_len=500_000, contigs=None, sort=False,
-                   output_format="bed", compress=False, no_hap=False, hap_tag="HP"):
+                   output_format="bed", compress=False, no_hap=False, hap_tag="HP",
+                   combine_cpg=False):
     """Write type and populated hap files; return {type[.hpN]: output_path}.
 
     Input BAM and FASTA must already be indexed. Default order follows BAM SQ;
@@ -274,6 +290,8 @@ def call_frequency(input_bam, reference, output_prefix, *, mod_types=DEFAULT_FRE
     except argparse.ArgumentTypeError as exc:
         raise ValueError(str(exc)) from exc
     selected = tuple(INTERNAL_FREQUENCY_TYPES[kind] for kind in MOD_TYPES if kind in requested)
+    if combine_cpg and "CpG" not in selected:
+        raise ValueError("combine_cpg requires 5mCpG in mod_types")
     if not 0 <= prob_cf <= 1:
         raise ValueError("prob_cf must be between 0 and 1")
     if not 0 <= mapq <= 255:
@@ -312,17 +330,17 @@ def call_frequency(input_bam, reference, output_prefix, *, mod_types=DEFAULT_FRE
         extension = "bed" if output_format == "bed" else "tsv"
         haps = (0,) if no_hap else (0, 1, 2)
         keys = [(kind, hap) for kind in selected for hap in haps]
-        outputs = {key: str(prefix) + f".{_output_label(key)}.{extension}" + (".gz" if compress else "")
+        outputs = {key: str(prefix) + f".{_output_label(key, combine_cpg)}.{extension}" + (".gz" if compress else "")
                    for key in keys}
         for path in outputs.values():
             if Path(path).exists() or Path(path + ".csi").exists():
                 raise FileExistsError(f"Output already exists: {path}")
         prefix.parent.mkdir(parents=True, exist_ok=True)
-        options = CountOptions(selected, prob_cf, refsites_only, mapq, no_hap, hap_tag)
+        options = CountOptions(selected, prob_cf, refsites_only, mapq, no_hap, hap_tag, combine_cpg)
         # Stage outputs until every worker succeeds, so malformed input never
         # leaves files that appear to be a successful genome-wide result.
         with tempfile.TemporaryDirectory(prefix=".call-freq-", dir=prefix.parent) as staging:
-            staged = {key: Path(staging) / f"{_output_label(key)}.{extension}" for key in keys}
+            staged = {key: Path(staging) / f"{_output_label(key, combine_cpg)}.{extension}" for key in keys}
             written = set()
             with ExitStack() as file_stack:
                 handles = {key: file_stack.enter_context(path.open("w", encoding="utf-8", newline=""))
@@ -396,6 +414,7 @@ def _parser():
     parser.add_argument("--refsites_only", action="store_true",
                         help="For 5mC/6mA, require the reference base to match C/A on the call's strand; "
                              "context-specific types always use reference motifs")
+    parser.add_argument("--combine_cpg", action="store_true", help="Combine CpG strands")
     parser.add_argument("--hap_tag", default="HP", help="Haplotype tag")
     parser.add_argument("--no_hap", action="store_true", help="Disable haplotype outputs")
     parser.add_argument("--contigs", nargs="+", help="Restrict to these contigs (exact names)")
@@ -418,7 +437,7 @@ def main(argv=None):
             refsites_only=args.refsites_only, mapq=args.mapq, min_cov=args.min_cov, threads=args.threads,
             chunk_len=args.chunk_len, contigs=args.contigs, sort=args.sort,
             output_format=args.output_format, compress=args.gzip,
-            no_hap=args.no_hap, hap_tag=args.hap_tag,
+            no_hap=args.no_hap, hap_tag=args.hap_tag, combine_cpg=args.combine_cpg,
         )
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
