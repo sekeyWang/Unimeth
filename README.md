@@ -174,15 +174,15 @@ Calculate site methylation frequencies from the modBAM produced above. The BAM m
 ```bash
 # Count the default modification types:
 unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
-    --output results/freq --sort
+    --output results/freq
 
 # Count CpG only and combine its two strands:
 unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
-    --output results/cpg_freq --mod_types 5mCpG --combine_cpg --sort
+    --output results/cpg_freq --mod_types 5mCpG --combine_cpg
 
 # Count all C sites with predictions:
 unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
-    --output results/all_c --mod_types 5mC --sort
+    --output results/all_c --mod_types 5mC
 ```
 
 - The default output is a bedMethyl file for each modification type, such as `results/freq.5mCpG.bed`.

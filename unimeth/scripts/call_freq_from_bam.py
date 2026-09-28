@@ -11,10 +11,8 @@ from concurrent.futures import ProcessPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
 import multiprocessing
-import os
 from pathlib import Path
 import re
-import tempfile
 
 from unimeth.config.modification_names import (
     DEFAULT_FREQUENCY_TYPES, FREQUENCY_TYPES, INTERNAL_FREQUENCY_TYPES,
@@ -22,7 +20,7 @@ from unimeth.config.modification_names import (
 )
 
 MOD_TYPES = FREQUENCY_TYPES
-TSV_HEADER = "chrom\tposition\tstrand\tmod_type\tcoverage\tmethylated\tunmethylated\tfrequency\n"
+# TSV_HEADER = "chrom\tposition\tstrand\tmod_type\tcoverage\tmethylated\tunmethylated\tfrequency\n"
 _COMPLEMENT = str.maketrans("ACGT", "TGCA")
 _H_BASES = frozenset("ACT")
 
@@ -267,6 +265,8 @@ def _write_counts(handles, region, counts, min_cov, output_format):
         key = kind, hap
         handles[key].write("\t".join(map(str, fields)) + "\n")
         written.add(key)
+    for key in written:
+        handles[key].flush()
     return written
 
 
@@ -275,13 +275,15 @@ def call_frequency(input_bam, reference, output_prefix, *, mod_types=DEFAULT_FRE
                    chunk_len=500_000, contigs=None, sort=False,
                    output_format="bed", compress=False, no_hap=False, hap_tag="HP",
                    combine_cpg=False):
-    """Write type and populated hap files; return {type[.hpN]: output_path}.
+    """Write visible type and hap files; return {type[.hpN]: output_path}.
 
     Input BAM and FASTA must already be indexed. Default order follows BAM SQ;
     sort (also implied by compress) orders contigs lexicographically. Memory
     stores region counts and current read positions, never genome-wide scores.
+    Each region is flushed as it is written; failures leave visible partial files.
     """
     import pysam
+    from tqdm import tqdm
 
     if not mod_types:
         raise ValueError("Select at least one modification type")
@@ -330,72 +332,52 @@ def call_frequency(input_bam, reference, output_prefix, *, mod_types=DEFAULT_FRE
         extension = "bed" if output_format == "bed" else "tsv"
         haps = (0,) if no_hap else (0, 1, 2)
         keys = [(kind, hap) for kind in selected for hap in haps]
-        outputs = {key: str(prefix) + f".{_output_label(key, combine_cpg)}.{extension}" + (".gz" if compress else "")
-                   for key in keys}
-        for path in outputs.values():
-            if Path(path).exists() or Path(path + ".csi").exists():
-                raise FileExistsError(f"Output already exists: {path}")
+        paths = {key: Path(str(prefix) + f".{_output_label(key, combine_cpg)}.{extension}") for key in keys}
+        outputs = {key: str(path) + (".gz" if compress else "") for key, path in paths.items()}
+        for key, path in paths.items():
+            for candidate in (str(path), outputs[key]):
+                if Path(candidate).exists() or Path(candidate + ".csi").exists():
+                    raise FileExistsError(f"Output already exists: {candidate}")
         prefix.parent.mkdir(parents=True, exist_ok=True)
         options = CountOptions(selected, prob_cf, refsites_only, mapq, no_hap, hap_tag, combine_cpg)
-        # Stage outputs until every worker succeeds, so malformed input never
-        # leaves files that appear to be a successful genome-wide result.
-        with tempfile.TemporaryDirectory(prefix=".call-freq-", dir=prefix.parent) as staging:
-            staged = {key: Path(staging) / f"{_output_label(key, combine_cpg)}.{extension}" for key in keys}
-            written = set()
-            with ExitStack() as file_stack:
-                handles = {key: file_stack.enter_context(path.open("w", encoding="utf-8", newline=""))
-                           for key, path in staged.items()}
-                if output_format == "tsv":
-                    for handle in handles.values():
-                        handle.write(TSV_HEADER)
-                regions = _regions(names, lengths, chunk_len)
-                if threads == 1:
-                    for region in regions:
-                        written.update(_write_counts(handles, region, _count_region(bam, fa, region, options),
-                                                     min_cov, output_format))
-                else:
-                    # Spawn keeps the parent BAM/FASTA handles out of workers.
-                    with ProcessPoolExecutor(
-                        max_workers=threads, mp_context=multiprocessing.get_context("spawn"),
-                        initializer=_init_worker, initargs=(input_bam, reference, options),
-                    ) as executor:
-                        for region, counts in _bounded_results(executor, regions, threads):
-                            written.update(_write_counts(handles, region, counts, min_cov, output_format))
-            # A TSV header is not hap data. Only groups with eligible site rows
-            # are published; total type files retain the existing empty behavior.
-            staged = {key: path for key, path in staged.items() if key[1] == 0 or key in written}
-            outputs = {key: outputs[key] for key in staged}
-            for key, path in list(staged.items()):
-                if compress:
-                    compressed = Path(str(path) + ".gz")
-                    pysam.tabix_compress(str(path), str(compressed), force=True)
-                    if output_format == "bed":
-                        pysam.tabix_index(str(compressed), preset="bed", csi=True, force=True)
-                    staged[key] = compressed
-            published = []
-            try:
-                for key, path in staged.items():
-                    # Staging is on the output filesystem. Linking publishes
-                    # atomically and refuses any file created during counting.
-                    os.link(path, outputs[key])
-                    published.append(Path(outputs[key]))
-                    if compress and output_format == "bed":
-                        index = outputs[key] + ".csi"
-                        os.link(str(path) + ".csi", index)
-                        published.append(Path(index))
-            except OSError as exc:
-                # A publication failure must not strand results that block a
-                # retry, or leave a compressed BED without its paired index.
-                remaining = []
-                for path in reversed(published):
-                    try:
-                        path.unlink(missing_ok=True)
-                    except OSError:
-                        remaining.append(str(path))
-                if remaining:
-                    raise OSError("Output publication failed; could not remove: "
-                                  + ", ".join(remaining)) from exc
-                raise
+        written = set()
+        with ExitStack() as file_stack:
+            handles = {key: file_stack.enter_context(path.open("x", encoding="utf-8", newline=""))
+                       for key, path in paths.items()}
+            regions = _regions(names, lengths, chunk_len)
+            total_regions = sum((lengths[name] + chunk_len - 1) // chunk_len for name in names)
+            progress = file_stack.enter_context(
+                tqdm(total=total_regions, desc="write_regions", unit="region", dynamic_ncols=True)
+            )
+            if threads == 1:
+                for region in regions:
+                    written.update(_write_counts(handles, region, _count_region(bam, fa, region, options),
+                                                 min_cov, output_format))
+                    progress.update(1)
+            else:
+                # Spawn keeps the parent BAM/FASTA handles out of workers.
+                with ProcessPoolExecutor(
+                    max_workers=threads, mp_context=multiprocessing.get_context("spawn"),
+                    initializer=_init_worker, initargs=(input_bam, reference, options),
+                ) as executor:
+                    for region, counts in _bounded_results(executor, regions, threads):
+                        written.update(_write_counts(handles, region, counts, min_cov, output_format))
+                        progress.update(1)
+        # Remove empty hap files after a successful run.
+        for key in list(paths):
+            if key[1] != 0 and key not in written:
+                paths.pop(key).unlink()
+                outputs.pop(key)
+        if compress:
+            for path in outputs.values():
+                if Path(path).exists() or Path(path + ".csi").exists():
+                    raise FileExistsError(f"Output already exists: {path}")
+            for key, path in paths.items():
+                pysam.tabix_compress(str(path), outputs[key], force=False)
+                if output_format == "bed":
+                    pysam.tabix_index(outputs[key], preset="bed", csi=True, force=False)
+            for path in paths.values():
+                path.unlink()
     return {_output_label(key): path for key, path in outputs.items()}
 
 
