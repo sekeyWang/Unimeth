@@ -96,10 +96,10 @@ def format_inference_args(args):
             ('Dorado Source', getattr(args, 'dorado_version_source', 'configured')),
         ],
         'Methylation': [
-            ('CpG', 'yes' if args.cpg else 'no'),
-            ('CHG', 'yes' if args.chg else 'no'),
-            ('CHH', 'yes' if args.chh else 'no'),
-            ('m6A', 'yes' if args.m6A else 'no'),
+            ('5mCpG', 'yes' if args.cpg else 'no'),
+            ('5mCHG', 'yes' if args.chg else 'no'),
+            ('5mCHH', 'yes' if args.chh else 'no'),
+            ('6mA', 'yes' if args.m6A else 'no'),
         ],
         'Processing': [
             ('Batch Size', args.batch_size),

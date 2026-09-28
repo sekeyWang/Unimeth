@@ -120,9 +120,9 @@ unimeth infer \
 --bam demo/demo.bam \
 --model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
 --out results/arab.bam \
---cpg 1 \
---chg 1 \
---chh 1 \
+--5mCpG 1 \
+--5mCHG 1 \
+--5mCHH 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
 --frequency 5khz
@@ -136,9 +136,9 @@ unimeth infer \
 --model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
 --out results/arab.tsv \
 --output_format tsv \
---cpg 1 \
---chg 1 \
---chh 1 \
+--5mCpG 1 \
+--5mCHG 1 \
+--5mCHH 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
 --frequency 5khz
@@ -149,6 +149,7 @@ Notes:
 - The default inference batch size is `256`; reduce `--batch_size` on GPUs with less available memory.
 - To generate TSV and modBAM together, use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam`.
 - For SLOW5/BLOW5 input, use `--slow5 reads.slow5` or `--slow5 reads.blow5` instead of `--pod5`.
+- Public modification names use `5mC` and `6mA`; context-specific names are `5mCpG`, `5mCHG`, and `5mCHH`. Inference, training, and calibration annotation accept `--5mCpG 1`, `--5mCHG 1`, `--5mCHH 1`, and `--6mA 1`. Legacy `--cpg`, `--chg`, `--chh`, and `--m6A` remain accepted. Model tokens, checkpoint fields, training labels, and existing inference TSV labels retain their original names for compatibility.
 
 #### Output
 
@@ -165,6 +166,39 @@ Unimeth outputs read-level methylation calls in **TSV** or **modBAM** format. A 
 ---
 
 The TSV file can be further processed to generate site-level methylation frequencies using the provided `scripts/call_modification_frequency.py` script. It can also be converted to modBAM format using `scripts/generate_5mC_modbam_file.py` (5mC only).
+
+#### Site-level methylation frequencies from modBAM
+
+Use an aligned, coordinate-sorted modBAM with a BAM index and the matching reference FASTA with a `.fai` index:
+
+```bash
+unimeth call_freq --input_bam results/reads.bam --ref reference.fa \
+    --output results/freq --sort --threads 4
+
+# For a model that predicts only 5mCpG:
+unimeth call_freq --input_bam results/reads.bam --ref reference.fa \
+    --output results/cpg_freq --mod_types 5mCpG --sort
+
+# Put all scored C positions in one file, keeping both strands separate:
+unimeth call_freq --input_bam results/reads.bam --ref reference.fa \
+    --output results/all_c --mod_types 5mC --sort
+
+# Require each C call to also match the reference base on that strand:
+unimeth call_freq --input_bam results/reads.bam --ref reference.fa \
+    --output results/reference_c --mod_types 5mC --refsites_only --sort
+```
+
+`--mod_types` accepts `5mC`, `5mCpG`, `5mCHG`, `5mCHH`, and `6mA`, separated by spaces. Legacy `CpG`, `CHG`, `CHH`, and `m6A` are accepted as aliases. Default selection remains the three reference contexts plus 6mA. The output is an 11-column bedMethyl file for each selected type, using the public names: `freq.5mCpG.bed`, `freq.5mCHG.bed`, `freq.5mCHH.bed`, and `freq.6mA.bed`. Selecting only `5mC` uses `PREFIX.5mC.bed` as the total output. Coordinates are zero-based, with one-base, half-open intervals. Column 10 is effective coverage; column 11 is methylation percentage rounded to an integer. Empty total outputs produce empty files. `--sort` orders by chromosome name and position; without it, chromosome order follows the BAM header. `--gzip` implies sorting, writes BGZF `.bed.gz` files, and adds `.csi` indexes.
+
+By default, reads with haplotype tag `HP=1` or `HP=2` also contribute to separate haplotype files. For example, selecting `5mCpG` produces `PREFIX.5mCpG.bed` and, when eligible sites exist, `PREFIX.5mCpG.hp1.bed` and `PREFIX.5mCpG.hp2.bed`. The total file includes all eligible reads, including those with missing, unparseable, or other haplotype values. Each group calculates its own coverage and frequency and applies `--prob_cf` and `--min_cov` independently. Use `--hap_tag XX` for a different BAM tag, or `--no_hap` for total output only. Haplotype files with no eligible site rows are omitted, including for TSV and compressed output. The same type and haplotype names are used for `.tsv` and `.gz` files.
+
+`--ref` is required for every selection. In all-C (`5mC`) mode, the default counts scored C positions in the read even when the aligned reference base differs, and includes positions whose context is unknown or touches a contig boundary. `--refsites_only` requires reference C on the positive strand or reference G on the negative strand. The same option requires A/T matches in `6mA` mode. Context-specific selections always use the reference CpG/CHG/CHH motif (H means A, C, or T).
+
+Counts follow [ccsmeth's count mode](https://github.com/PengNi/ccsmeth/blob/3c106e3427a9d57a44fe4e6905a0882b54678d65/ccsmeth/call_mods_freq_bam.py) with effective coverage: frequency is methylated / (methylated + unmethylated). Only explicit `C+m` or `A+a` predictions with ML probabilities are counted. Uncalled bases and calls failing `--prob_cf` are excluded from coverage. `--prob_cf` is the minimum difference between modified and unmodified probabilities, from 0 to 1; the default 0 retains all scored calls. ML bytes use ccsmeth's `ML / 256` convention (with its rounding), so ML=128 is called methylated. This probability quantization can change calls close to a threshold compared with the original inference TSV.
+
+All types retain separate strands, including CpG, with each call reported at its actual reference position. There is no strand-merging option. Unmapped, secondary, supplementary, duplicate, and QC-failed records are excluded; `--mapq` defaults to 1. `--min_cov` sets minimum effective coverage. `--contigs` restricts exact contig names, and `--chunk_len` controls region size for bounded memory use. Existing output files are not overwritten.
+
+For exact counts and a frequency with six decimal places, use `--output_format tsv`. Its columns are `chrom`, `position`, `strand`, `mod_type`, `coverage`, `methylated`, `unmethylated`, and `frequency`. This module does not require a model or GPU.
 
 
 ## 🧪 Models
@@ -209,7 +243,7 @@ For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.0
 | modBAM        | BAM with MM/ML methylation tags (`--output_format bam`, default) |
 | tsv           | Per-read methylation calls (`--output_format tsv`) |
 | both          | TSV and modBAM simultaneously (`--output_format both`; use `--tsv_out`/`--tsv_out_dir` and `--bam_out`/`--bam_out_dir` for separate paths) |
-| bedmethyl     | Site-level methylation frequencies (post-processing) |
+| bed           | Site-level methylation frequencies in bedMethyl format (`unimeth call_freq --output_format bed`, default) |
 ---
 
 ## 📚 Citation
@@ -234,6 +268,6 @@ This project is licensed under the BSD 3-Clause Clear License. See [LICENSE](LIC
 ## TODO
 - [ ] After the official POD5 Conda packages are fixed, update UniMeth's Conda package, dependencies, and installation instructions.
 - [ ] Create a new `envs/environment-gpu.yml` after the Conda installation path is working.
-- [ ] Module for methylation frequency calculation.
+- [x] Module for methylation frequency calculation.
 - [ ] Make bam sorting and indexing optional.
 - [ ] Evaluate and improve compatibility with additional Dorado basecalling models.

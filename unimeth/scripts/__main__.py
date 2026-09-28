@@ -6,6 +6,7 @@ Usage:
     
 Commands:
     infer               Run methylation inference
+    call_freq           Count site methylation frequencies from modBAM
     calibration         Calibration data preparation tools
         bed_to_bam      Convert BED bisulfite labels to BAM
         annotator       Create read-level calibration labels
@@ -20,6 +21,7 @@ Commands:
 
 Examples:
     unimeth infer --help
+    unimeth call_freq --input_bam reads.bam --ref reference.fa --output freq --sort
     unimeth calibration bed_to_bam --help
     unimeth m6a visualize --pred_dir <bam> --dorado_dir <bam>
     unimeth evaluate --tsv_dir <predictions.txt> --CpG_bed_dir <labels.bed>
@@ -31,6 +33,11 @@ from unimeth import __version__
 
 # Command registry
 DIRECT_COMMANDS = {
+    'call_freq': {
+        'description': 'Count site methylation frequencies from modBAM',
+        'module': 'unimeth.scripts.call_freq_from_bam',
+        'prog': 'unimeth call_freq',
+    },
     'infer': {
         'description': 'Run methylation inference',
         'module': 'unimeth.inference.__main__',
