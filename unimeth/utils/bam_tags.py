@@ -5,8 +5,10 @@ This module provides functions for generating MM/ML tags used in BAM files
 to store methylation modification information.
 """
 import numpy as np
+from argparse import ArgumentTypeError
 from array import array
 from typing import Dict, List, Tuple, Optional
+from unimeth.config.modification_names import normalize_base_type
 
 # Modification type to (base, mod_key) mapping
 MOD_TYPE_CONFIG = {
@@ -38,7 +40,10 @@ def get_mod_config(mod_type: str) -> Tuple[str, Tuple]:
         ('C', ('C', 0, 'm'))
     """
     if mod_type not in MOD_TYPE_CONFIG:
-        raise ValueError(f"Unknown mod_type: {mod_type}. Supported: {list(MOD_TYPE_CONFIG.keys())}")
+        try:
+            mod_type = 'a' if normalize_base_type(mod_type) == '6mA' else 'm'
+        except ArgumentTypeError as exc:
+            raise ValueError(str(exc)) from exc
     return MOD_TYPE_CONFIG[mod_type]
 
 

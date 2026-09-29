@@ -35,6 +35,7 @@ import argparse
 import datetime
 
 from unimeth.config import merge_with_default_config, defaultconfig
+from unimeth.config.modification_names import add_methylation_flags
 from unimeth.training import PretrainTrainer, FinetuneTrainer, CalibrationTrainer
 from unimeth.utils import local_print
 
@@ -68,10 +69,7 @@ def create_training_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument('--max_steps', type=int, help='Maximum training steps')
     parser.add_argument('--val_num', type=int, help='Number of validation samples')
 
-    parser.add_argument('--cpg', type=int, default=0, help='Enable CpG detection (1=yes)')
-    parser.add_argument('--chg', type=int, default=0, help='Enable CHG detection (1=yes)')
-    parser.add_argument('--chh', type=int, default=0, help='Enable CHH detection (1=yes)')
-    parser.add_argument('--m6A', type=int, default=0, help='Enable m6A detection (1=yes)')
+    add_methylation_flags(parser)
 
     parser.add_argument('--plant', type=int, default=0,
                         help='Use plant-specific unbalanced loss (1=yes)')

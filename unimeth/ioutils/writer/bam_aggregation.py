@@ -9,6 +9,7 @@ Features:
 """
 import time
 import logging
+from array import array
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Any
@@ -19,7 +20,7 @@ import numpy as np
 import torch
 
 from unimeth.config import tokenizer, methy_types
-from unimeth.utils.bam_tags import write_mm_ml_tags
+from unimeth.utils.bam_tags import get_MM_ML
 
 logger = logging.getLogger(__name__)
 _INCOMPLETE_READ_DEBUG_LIMIT = 10
@@ -267,26 +268,22 @@ class AggregationBAMWriter:
                 else:
                     c_preds.append(pred)
 
-        # Generate and write MM/ML tags for each base type
-        written = False
-        
-        # Process C modifications (CpG, CHG, CHH)
-        if c_preds:
-            c_positions, c_scores = self._extract_positions_scores(
-                c_preds, 'C', fwd_seq, bam_read
-            )
-            if c_positions and write_mm_ml_tags(bam_read, c_positions, c_scores, 'C+m?,'):
-                written = True
-        
-        # Process A modifications (m6A)
-        if a_preds:
-            a_positions, a_scores = self._extract_positions_scores(
-                a_preds, 'A', fwd_seq, bam_read
-            )
-            if a_positions and write_mm_ml_tags(bam_read, a_positions, a_scores, 'A+a?,'):
-                written = True
-        
-        if written:
+        # ML entries follow the same group order as MM. Set the complete pair
+        # once: setting tags separately for A would overwrite C predictions.
+        mm_groups = []
+        ml_values = array('B')
+        for preds, base, mod_name in (
+            (c_preds, 'C', 'C+m?,'), (a_preds, 'A', 'A+a?,'),
+        ):
+            positions, scores = self._extract_positions_scores(preds, base, fwd_seq, bam_read)
+            if positions:
+                mm, ml = get_MM_ML(positions, scores, mod_name)
+                mm_groups.append(mm)
+                ml_values.extend(ml)
+
+        if ml_values:
+            bam_read.set_tag('MM', ''.join(mm_groups), value_type='Z')
+            bam_read.set_tag('ML', ml_values)
             # MM/ML coordinates describe the current BAM record SEQ. Rewrite MN
             # as well because hard-clipped supplementary records may carry the
             # parent record's stale sequence length.

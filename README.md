@@ -9,7 +9,6 @@
 [![Conda Version](https://img.shields.io/conda/vn/bioconda/unimeth.svg)](https://anaconda.org/bioconda/unimeth)
 [![Conda Downloads](https://img.shields.io/conda/dn/bioconda/unimeth.svg)](https://anaconda.org/bioconda/unimeth)
 
-<!-- Workflow figure temporarily hidden while it is being updated: ![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/workflow.jpg) -->
 **Unimeth** is a unified deep learning framework for detecting DNA methylation (5mC, 6mA) from Oxford Nanopore reads. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz) and methylation calling across plant, mammalian, and bacterial genomes.
 
 ---
@@ -120,9 +119,9 @@ unimeth infer \
 --bam demo/demo.bam \
 --model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
 --out results/arab.bam \
---cpg 1 \
---chg 1 \
---chh 1 \
+--5mCpG 1 \
+--5mCHG 1 \
+--5mCHH 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
 --frequency 5khz
@@ -136,19 +135,19 @@ unimeth infer \
 --model checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
 --out results/arab.tsv \
 --output_format tsv \
---cpg 1 \
---chg 1 \
---chh 1 \
+--5mCpG 1 \
+--5mCHG 1 \
+--5mCHH 1 \
 --batch_size 256 \
 --pore_type R10.4.1 \
 --frequency 5khz
 ```
 
 Notes:
-
 - The default inference batch size is `256`; reduce `--batch_size` on GPUs with less available memory.
 - To generate TSV and modBAM together, use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam`.
 - For SLOW5/BLOW5 input, use `--slow5 reads.slow5` or `--slow5 reads.blow5` instead of `--pod5`.
+- Public modification names use `5mC` and `6mA`; context-specific names are `5mCpG`, `5mCHG`, and `5mCHH`. Inference, training, and calibration annotation accept `--5mCpG 1`, `--5mCHG 1`, `--5mCHH 1`, and `--6mA 1`. Legacy `--cpg`, `--chg`, `--chh`, and `--m6A` remain accepted. Model tokens, checkpoint fields, training labels, and existing inference TSV labels retain their original names for compatibility.
 
 #### Output
 
@@ -164,7 +163,28 @@ Unimeth outputs read-level methylation calls in **TSV** or **modBAM** format. A 
 | Chr2 | 15338457 | - | -1 | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 20 | [CHH] | 0.999000 | 0.000000 | 0 | . |
 ---
 
-The TSV file can be further processed to generate site-level methylation frequencies using the provided `scripts/call_modification_frequency.py` script. It can also be converted to modBAM format using `scripts/generate_5mC_modbam_file.py` (5mC only).
+### 4. Methylation frequency calling
+
+Calculate site methylation frequencies from the modBAM produced above. The BAM must be coordinate-sorted and indexed, with a matching indexed reference FASTA.
+
+```bash
+# Count the default modification types:
+unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
+    --output results/freq
+
+# Count CpG only and combine its two strands:
+unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
+    --output results/cpg_freq --mod_types 5mCpG --combine_cpg
+
+# Count all C sites with predictions:
+unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
+    --output results/all_c --mod_types 5mC
+```
+
+Notes:
+- The default output is a bedMethyl file for each modification type, such as `results/freq.5mCpG.bed`.
+- Add `--combine_cpg` to combine CpG strands.
+- Reads with `HP=1` or `HP=2` also produce haplotype files when eligible sites exist. Use `--no_hap` for total output only.
 
 
 ## 🧪 Models
@@ -181,19 +201,6 @@ Download models from the [Google Drive](https://drive.google.com/drive/folders/1
 
 ---
 
-<!--
-## 📊 Performance Highlights
-Benchmark figure temporarily hidden while results are being updated:
-![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/plant_result.jpg)
-- Outperforms DeepPlant, Dorado, Rockfish, and DeepMod2 in cross-species benchmarks.
-- Superior accuracy in repetitive regions (centromeres, transposons).
-- Lower false positive rates in CHH and 6mA contexts.
-- Robust to batch effects and unseen species.
-
-For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.05.692231).
-
----
--->
 
 ## 📁 Input/Output Formats
 
@@ -209,7 +216,7 @@ For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.0
 | modBAM        | BAM with MM/ML methylation tags (`--output_format bam`, default) |
 | tsv           | Per-read methylation calls (`--output_format tsv`) |
 | both          | TSV and modBAM simultaneously (`--output_format both`; use `--tsv_out`/`--tsv_out_dir` and `--bam_out`/`--bam_out_dir` for separate paths) |
-| bedmethyl     | Site-level methylation frequencies (post-processing) |
+| bed           | Site-level methylation frequencies in bedMethyl format (`unimeth call_freq --output_format bed`, default) |
 ---
 
 ## 📚 Citation
@@ -234,6 +241,7 @@ This project is licensed under the BSD 3-Clause Clear License. See [LICENSE](LIC
 ## TODO
 - [ ] After the official POD5 Conda packages are fixed, update UniMeth's Conda package, dependencies, and installation instructions.
 - [ ] Create a new `envs/environment-gpu.yml` after the Conda installation path is working.
-- [ ] Module for methylation frequency calculation.
+- [x] Module for methylation frequency calculation.
 - [ ] Make bam sorting and indexing optional.
 - [ ] Evaluate and improve compatibility with additional Dorado basecalling models.
+- [ ] Prevent normalization warnings from disrupting tqdm progress output.
