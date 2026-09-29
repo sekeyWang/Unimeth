@@ -9,7 +9,6 @@
 [![Conda Version](https://img.shields.io/conda/vn/bioconda/unimeth.svg)](https://anaconda.org/bioconda/unimeth)
 [![Conda Downloads](https://img.shields.io/conda/dn/bioconda/unimeth.svg)](https://anaconda.org/bioconda/unimeth)
 
-<!-- Workflow figure temporarily hidden while it is being updated: ![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/workflow.jpg) -->
 **Unimeth** is a unified deep learning framework for detecting DNA methylation (5mC, 6mA) from Oxford Nanopore reads. Built on a transformer-based architecture, Unimeth supports multiple sequencing chemistries (R9.4.1, R10.4.1 4kHz/5kHz) and methylation calling across plant, mammalian, and bacterial genomes.
 
 ---
@@ -145,7 +144,6 @@ unimeth infer \
 ```
 
 Notes:
-
 - The default inference batch size is `256`; reduce `--batch_size` on GPUs with less available memory.
 - To generate TSV and modBAM together, use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam`.
 - For SLOW5/BLOW5 input, use `--slow5 reads.slow5` or `--slow5 reads.blow5` instead of `--pod5`.
@@ -165,8 +163,6 @@ Unimeth outputs read-level methylation calls in **TSV** or **modBAM** format. A 
 | Chr2 | 15338457 | - | -1 | 28752a76-7007-40d7-8ede-f2939fe2ab26 | 20 | [CHH] | 0.999000 | 0.000000 | 0 | . |
 ---
 
-The TSV file can be further processed to generate site-level methylation frequencies using the provided `scripts/call_modification_frequency.py` script. It can also be converted to modBAM format using `scripts/generate_5mC_modbam_file.py` (5mC only).
-
 ### 4. Methylation frequency calling
 
 Calculate site methylation frequencies from the modBAM produced above. The BAM must be coordinate-sorted and indexed, with a matching indexed reference FASTA.
@@ -185,6 +181,7 @@ unimeth call_freq --input_bam results/arab.bam --ref reference.fa \
     --output results/all_c --mod_types 5mC
 ```
 
+Notes:
 - The default output is a bedMethyl file for each modification type, such as `results/freq.5mCpG.bed`.
 - Add `--combine_cpg` to combine CpG strands.
 - Reads with `HP=1` or `HP=2` also produce haplotype files when eligible sites exist. Use `--no_hap` for total output only.
@@ -204,19 +201,6 @@ Download models from the [Google Drive](https://drive.google.com/drive/folders/1
 
 ---
 
-<!--
-## 📊 Performance Highlights
-Benchmark figure temporarily hidden while results are being updated:
-![description](https://raw.githubusercontent.com/sekeyWang/Unimeth/main/images/plant_result.jpg)
-- Outperforms DeepPlant, Dorado, Rockfish, and DeepMod2 in cross-species benchmarks.
-- Superior accuracy in repetitive regions (centromeres, transposons).
-- Lower false positive rates in CHH and 6mA contexts.
-- Robust to batch effects and unseen species.
-
-For detailed benchmarks, see the [manuscript](https://doi.org/10.64898/2025.12.05.692231).
-
----
--->
 
 ## 📁 Input/Output Formats
 
