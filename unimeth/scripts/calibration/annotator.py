@@ -13,6 +13,7 @@ Example usage:
         --cpg 1
 """
 import argparse
+from unimeth.config.modification_names import add_methylation_flags
 from typing import Dict, List, Tuple
 import numpy as np
 from tqdm import tqdm
@@ -154,30 +155,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         default=10,
         help='Minimum mapping quality threshold (default: 10)'
     )
-    parser.add_argument(
-        '--cpg',
-        type=int,
-        default=0,
-        help='Enable CpG detection (1=yes)'
-    )
-    parser.add_argument(
-        '--chg',
-        type=int,
-        default=0,
-        help='Enable CHG detection (1=yes)'
-    )
-    parser.add_argument(
-        '--chh',
-        type=int,
-        default=0,
-        help='Enable CHH detection (1=yes)'
-    )
-    parser.add_argument(
-        '--m6A',
-        type=int,
-        default=0,
-        help='Enable m6A detection (1=yes)'
-    )
+    add_methylation_flags(parser)
     parser.add_argument(
         '--pore_type',
         type=str,

@@ -13,6 +13,7 @@ Example usage:
         --CpG_bed_dir <cpg_labels.bed>
 """
 import argparse
+from unimeth.config.modification_names import normalize_base_type
 from typing import Dict, Optional
 import numpy as np
 from tqdm import tqdm
@@ -136,10 +137,10 @@ def create_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         '--mod_type',
-        type=str,
-        default='m',
-        choices=['m', 'a'],
-        help="Modification type in BAM ('m' for CpG/CHG/CHH, 'a' for m6A)"
+        type=normalize_base_type,
+        default='5mC',
+        choices=['5mC', '6mA'],
+        help='Modification base type in BAM (default: 5mC)'
     )
     return parser
 
