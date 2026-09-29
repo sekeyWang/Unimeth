@@ -1,6 +1,11 @@
 Changelog
 =========
 
+v0.3.3
+------
+- Add modBAM frequency calling with BED/TSV output
+- Support haplotype outputs and CpG strand combination
+
 v0.3.2
 ------
 - Fix signal normalization for recent Dorado versions
