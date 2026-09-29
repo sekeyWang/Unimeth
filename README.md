@@ -260,3 +260,4 @@ This project is licensed under the BSD 3-Clause Clear License. See [LICENSE](LIC
 - [x] Module for methylation frequency calculation.
 - [ ] Make bam sorting and indexing optional.
 - [ ] Evaluate and improve compatibility with additional Dorado basecalling models.
+- [ ] Prevent normalization warnings from disrupting tqdm progress output.

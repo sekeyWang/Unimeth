@@ -1,9 +1,4 @@
-"""Count site methylation frequencies from explicit binary modBAM predictions.
-
-The count and ML probability conventions follow ccsmeth's count mode with
-effective coverage (no_amb_cov). Uncalled bases never contribute to coverage.
-Only the forward molecule's C+m and A+a predictions are supported.
-"""
+"""Count site methylation frequencies from modBAM."""
 import argparse
 import atexit
 from collections import deque
