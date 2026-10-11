@@ -181,6 +181,32 @@ Notes:
 - Add `--combine_cpg` to combine CpG strands.
 - Reads with `HP=1` or `HP=2` also produce haplotype files when eligible sites exist. Use `--no_hap` for total output only.
 
+### 5. Training
+
+1. Prepare separate training and validation POD5 directories (`data/train_pod5/` and `data/val_pod5/`). Prepare a matching BAM (`data/labeled.bam`) containing reads from both sets, retaining `mv`/`ts` tags and WGBS-derived `MM`/`ML` labels. See `unimeth calibration bed_to_bam --help` for label preparation.
+
+2. Build the UniMeth BAM read index before training:
+
+```bash
+python -c 'from unimeth.ioutils.reader import BamReader; BamReader("data/labeled.bam").bam_file.close()'
+```
+
+3. Start fine-tuning with a downloaded checkpoint:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 unimeth-train --mode finetune \
+  --bam_dir data/labeled.bam \
+  --train_pod5_dir data/train_pod5 \
+  --val_pod5_dir data/val_pod5 \
+  --model_dir checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
+  --5mCpG 1 --5mCHG 1 --5mCHH 1 \
+  --pore_type R10.4.1 --frequency 5khz \
+  --batch_size 64 --max_steps 10000 \
+  --run_name finetune_demo
+```
+
+Checkpoints are saved under `models/finetune/finetune_demo/checkpoint-*/`. Use `unimeth-train --help` for the available training modes (`pretrain`, `finetune`, and `calibration`).
+
 
 ## 🧪 Models
 
