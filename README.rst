@@ -1,6 +1,11 @@
 Changelog
 =========
 
+v0.3.4
+------
+- Update dependencies and installation instructions
+- Add GPU environment yaml file
+
 v0.3.3
 ------
 - Add modBAM frequency calling with BED/TSV output

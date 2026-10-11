@@ -28,42 +28,37 @@
 - Python 3.12+
 - [Dorado](https://github.com/nanoporetech/dorado) for basecalling
 
-### Option 1. Install from Source
+### Option 1. Install with Conda
 
 ```bash
-git clone https://github.com/sekeyWang/Unimeth.git
-cd Unimeth
-
-conda create -n unimeth python=3.12
-conda activate unimeth
-
-pip install .
-```
-
-For SLOW5/BLOW5 input, install `pyslow5` separately with `pip install pyslow5`, or install the optional pip extra with `pip install ".[slow5]"`.
-
-### Option 2. Install with Conda and pip
-
-```bash
-git clone https://github.com/sekeyWang/Unimeth.git
-cd Unimeth
-
 conda create -y -n unimeth \
   -c conda-forge -c bioconda \
   --override-channels --strict-channel-priority \
-  python=3.12 pip \
-  "pytorch=2.5.1=cuda126*" \
-  accelerate transformers numpy tqdm pysam scikit-learn scipy packaging
+  python=3.12 pip unimeth
+conda activate unimeth
+```
 
+If the installed PyTorch build does not suit your NVIDIA driver or GPU, reinstall a compatible build. For example, the [official PyTorch 2.5.1 Conda package](https://pytorch.org/get-started/previous-versions/#v251) with CUDA 11.8:
+
+```bash
+conda install -y -c conda-forge -c bioconda -c pytorch -c nvidia \
+  --override-channels --no-channel-priority \
+  "pytorch::pytorch=2.5.1" "pytorch::pytorch-cuda=11.8"
+```
+
+### Option 2. Install from Source
+
+```bash
+git clone https://github.com/sekeyWang/Unimeth.git
+cd Unimeth
+
+conda create -y -n unimeth -c conda-forge python=3.12 pip
 conda activate unimeth
 
-python -m pip install --only-binary=:all: \
-  "pod5==0.3.44" \
-  "lib-pod5==0.3.44" \
-  "pyarrow>=22,<23"
-
-python -m pip install --no-deps .
+python -m pip install .
 ```
+
+For SLOW5/BLOW5 input, install `pyslow5` separately with `python -m pip install pyslow5`, or install the optional source extra with `python -m pip install ".[slow5]"`.
 
 ### Option 3. Install via pip
 
@@ -147,7 +142,7 @@ Notes:
 - The default inference batch size is `256`; reduce `--batch_size` on GPUs with less available memory.
 - To generate TSV and modBAM together, use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam`.
 - For SLOW5/BLOW5 input, use `--slow5 reads.slow5` or `--slow5 reads.blow5` instead of `--pod5`.
-- Public modification names use `5mC` and `6mA`; context-specific names are `5mCpG`, `5mCHG`, and `5mCHH`. Inference, training, and calibration annotation accept `--5mCpG 1`, `--5mCHG 1`, `--5mCHH 1`, and `--6mA 1`. Legacy `--cpg`, `--chg`, `--chh`, and `--m6A` remain accepted. Model tokens, checkpoint fields, training labels, and existing inference TSV labels retain their original names for compatibility.
+- Public modification names use `5mC` and `6mA`; context-specific names are `5mCpG`, `5mCHG`, and `5mCHH`. Inference, training, and calibration annotation accept `--5mCpG 1`, `--5mCHG 1`, `--5mCHH 1`, and `--6mA 1`.
 
 #### Output
 
@@ -185,6 +180,32 @@ Notes:
 - The default output is a bedMethyl file for each modification type, such as `results/freq.5mCpG.bed`.
 - Add `--combine_cpg` to combine CpG strands.
 - Reads with `HP=1` or `HP=2` also produce haplotype files when eligible sites exist. Use `--no_hap` for total output only.
+
+### 5. Training
+
+1. Prepare separate training and validation POD5 directories (`data/train_pod5/` and `data/val_pod5/`). Prepare a matching BAM (`data/labeled.bam`) containing reads from both sets, retaining `mv`/`ts` tags and WGBS-derived `MM`/`ML` labels. See `unimeth calibration bed_to_bam --help` for label preparation.
+
+2. Build the UniMeth BAM read index before training:
+
+```bash
+python -c 'from unimeth.ioutils.reader import BamReader; BamReader("data/labeled.bam").bam_file.close()'
+```
+
+3. Start fine-tuning with a downloaded checkpoint:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 unimeth-train --mode finetune \
+  --bam_dir data/labeled.bam \
+  --train_pod5_dir data/train_pod5 \
+  --val_pod5_dir data/val_pod5 \
+  --model_dir checkpoints/unimeth_r10.4.1_5kHz_5mC.pt \
+  --5mCpG 1 --5mCHG 1 --5mCHH 1 \
+  --pore_type R10.4.1 --frequency 5khz \
+  --batch_size 64 --max_steps 10000 \
+  --run_name finetune_demo
+```
+
+Checkpoints are saved under `models/finetune/finetune_demo/checkpoint-*/`. Use `unimeth-train --help` for the available training modes (`pretrain`, `finetune`, and `calibration`).
 
 
 ## 🧪 Models
@@ -239,9 +260,7 @@ This project is licensed under the BSD 3-Clause Clear License. See [LICENSE](LIC
 ---
 
 ## TODO
-- [ ] After the official POD5 Conda packages are fixed, update UniMeth's Conda package, dependencies, and installation instructions.
-- [ ] Create a new `envs/environment-gpu.yml` after the Conda installation path is working.
+- [x] After the official POD5 Conda packages are fixed, update UniMeth's Conda package, dependencies, and installation instructions.
+- [x] Create a new `envs/environment-gpu.yml` after the Conda installation path is working.
 - [x] Module for methylation frequency calculation.
 - [ ] Make bam sorting and indexing optional.
-- [ ] Evaluate and improve compatibility with additional Dorado basecalling models.
-- [ ] Prevent normalization warnings from disrupting tqdm progress output.
