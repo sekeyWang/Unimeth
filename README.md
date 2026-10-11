@@ -38,6 +38,14 @@ conda create -y -n unimeth \
 conda activate unimeth
 ```
 
+If the installed PyTorch build does not suit your NVIDIA driver or GPU, reinstall a compatible build. For example, the [official PyTorch 2.5.1 Conda package](https://pytorch.org/get-started/previous-versions/#v251) with CUDA 11.8:
+
+```bash
+conda install -y -c conda-forge -c bioconda -c pytorch -c nvidia \
+  --override-channels --no-channel-priority \
+  "pytorch::pytorch=2.5.1" "pytorch::pytorch-cuda=11.8"
+```
+
 ### Option 2. Install from Source
 
 ```bash
@@ -59,13 +67,6 @@ conda create -n unimeth python=3.12
 conda activate unimeth
 
 pip install unimeth
-```
-
-If the installed PyTorch build does not suit your NVIDIA driver or GPU, use pip to reinstall a compatible build (`torch>=2.3,<2.9`) from the [official PyTorch source](https://pytorch.org/get-started/previous-versions/). For example, PyTorch 2.5.1 with CUDA 11.8:
-
-```bash
-python -m pip install --force-reinstall "torch==2.5.1" \
-  --index-url https://download.pytorch.org/whl/cu118
 ```
 
 Use `unimeth --help` to list utility subcommands, `unimeth --version` to print the installed version.
@@ -234,6 +235,6 @@ This project is licensed under the BSD 3-Clause Clear License. See [LICENSE](LIC
 
 ## TODO
 - [x] After the official POD5 Conda packages are fixed, update UniMeth's Conda package, dependencies, and installation instructions.
-- [ ] Create a new `envs/environment-gpu.yml` after the Conda installation path is working.
+- [x] Create a new `envs/environment-gpu.yml` after the Conda installation path is working.
 - [x] Module for methylation frequency calculation.
 - [ ] Make bam sorting and indexing optional.
