@@ -28,42 +28,29 @@
 - Python 3.12+
 - [Dorado](https://github.com/nanoporetech/dorado) for basecalling
 
-### Option 1. Install from Source
+### Option 1. Install with Conda
 
 ```bash
-git clone https://github.com/sekeyWang/Unimeth.git
-cd Unimeth
-
-conda create -n unimeth python=3.12
-conda activate unimeth
-
-pip install .
-```
-
-For SLOW5/BLOW5 input, install `pyslow5` separately with `pip install pyslow5`, or install the optional pip extra with `pip install ".[slow5]"`.
-
-### Option 2. Install with Conda and pip
-
-```bash
-git clone https://github.com/sekeyWang/Unimeth.git
-cd Unimeth
-
 conda create -y -n unimeth \
   -c conda-forge -c bioconda \
   --override-channels --strict-channel-priority \
-  python=3.12 pip \
-  "pytorch=2.5.1=cuda126*" \
-  accelerate transformers numpy tqdm pysam scikit-learn scipy packaging
+  python=3.12 pip unimeth
+conda activate unimeth
+```
 
+### Option 2. Install from Source
+
+```bash
+git clone https://github.com/sekeyWang/Unimeth.git
+cd Unimeth
+
+conda create -y -n unimeth -c conda-forge python=3.12 pip
 conda activate unimeth
 
-python -m pip install --only-binary=:all: \
-  "pod5==0.3.44" \
-  "lib-pod5==0.3.44" \
-  "pyarrow>=22,<23"
-
-python -m pip install --no-deps .
+python -m pip install .
 ```
+
+For SLOW5/BLOW5 input, install `pyslow5` separately with `python -m pip install pyslow5`, or install the optional source extra with `python -m pip install ".[slow5]"`.
 
 ### Option 3. Install via pip
 
@@ -72,6 +59,13 @@ conda create -n unimeth python=3.12
 conda activate unimeth
 
 pip install unimeth
+```
+
+If the installed PyTorch build does not suit your NVIDIA driver or GPU, use pip to reinstall a compatible build (`torch>=2.3,<2.9`) from the [official PyTorch source](https://pytorch.org/get-started/previous-versions/). For example, PyTorch 2.5.1 with CUDA 11.8:
+
+```bash
+python -m pip install --force-reinstall "torch==2.5.1" \
+  --index-url https://download.pytorch.org/whl/cu118
 ```
 
 Use `unimeth --help` to list utility subcommands, `unimeth --version` to print the installed version.
@@ -147,7 +141,7 @@ Notes:
 - The default inference batch size is `256`; reduce `--batch_size` on GPUs with less available memory.
 - To generate TSV and modBAM together, use `--output_format both --tsv_out results/arab.tsv --bam_out results/arab.bam`.
 - For SLOW5/BLOW5 input, use `--slow5 reads.slow5` or `--slow5 reads.blow5` instead of `--pod5`.
-- Public modification names use `5mC` and `6mA`; context-specific names are `5mCpG`, `5mCHG`, and `5mCHH`. Inference, training, and calibration annotation accept `--5mCpG 1`, `--5mCHG 1`, `--5mCHH 1`, and `--6mA 1`. Legacy `--cpg`, `--chg`, `--chh`, and `--m6A` remain accepted. Model tokens, checkpoint fields, training labels, and existing inference TSV labels retain their original names for compatibility.
+- Public modification names use `5mC` and `6mA`; context-specific names are `5mCpG`, `5mCHG`, and `5mCHH`. Inference, training, and calibration annotation accept `--5mCpG 1`, `--5mCHG 1`, `--5mCHH 1`, and `--6mA 1`.
 
 #### Output
 
@@ -239,9 +233,7 @@ This project is licensed under the BSD 3-Clause Clear License. See [LICENSE](LIC
 ---
 
 ## TODO
-- [ ] After the official POD5 Conda packages are fixed, update UniMeth's Conda package, dependencies, and installation instructions.
+- [x] After the official POD5 Conda packages are fixed, update UniMeth's Conda package, dependencies, and installation instructions.
 - [ ] Create a new `envs/environment-gpu.yml` after the Conda installation path is working.
 - [x] Module for methylation frequency calculation.
 - [ ] Make bam sorting and indexing optional.
-- [ ] Evaluate and improve compatibility with additional Dorado basecalling models.
-- [ ] Prevent normalization warnings from disrupting tqdm progress output.
