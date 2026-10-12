@@ -34,16 +34,25 @@
 conda create -y -n unimeth \
   -c conda-forge -c bioconda \
   --override-channels --strict-channel-priority \
-  python=3.12 pip unimeth
+  python=3.12 pip unimeth=0.3.4 pytorch-gpu
 conda activate unimeth
 ```
 
-If the installed PyTorch build does not suit your NVIDIA driver or GPU, reinstall a compatible build. For example, the [official PyTorch 2.5.1 Conda package](https://pytorch.org/get-started/previous-versions/#v251) with CUDA 11.8:
+If the installed PyTorch build does not suit your NVIDIA driver or GPU, replace it with a suitable version (for example, the [official PyTorch 2.5.1 Conda package](https://pytorch.org/get-started/previous-versions/#v251) with CUDA 12.4):
 
 ```bash
-conda install -y -c conda-forge -c bioconda -c pytorch -c nvidia \
-  --override-channels --no-channel-priority \
-  "pytorch::pytorch=2.5.1" "pytorch::pytorch-cuda=11.8"
+conda remove -y pytorch-gpu pytorch libtorch
+conda install -y -c pytorch -c nvidia -c conda-forge -c bioconda \
+  --override-channels --strict-channel-priority \
+  unimeth=0.3.4 "pytorch::pytorch=2.5.1=py3.12_cuda12.4*" \
+  "pytorch::pytorch-cuda=12.4" "mkl<2024.1"
+```
+
+Alternatively, install the GPU environment using [environment-gpu.yml](envs/environment-gpu.yml):
+
+```bash
+conda env create -f /path/to/envs/environment-gpu.yml
+conda activate unimeth
 ```
 
 ### Option 2. Install from Source

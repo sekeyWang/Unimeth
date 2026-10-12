@@ -1,24 +1,25 @@
-# Linux GPU runtime dependencies; PyTorch 2.5.1 / CUDA 11.8 and Accelerate via pip.
-# Install UniMeth from the repository root with: python -m pip install --no-deps .
 name: unimeth
 channels:
+  - pytorch
+  - nvidia
   - conda-forge
   - bioconda
   - nodefaults
 dependencies:
   - python=3.12
   - pip
+  - "bioconda::unimeth=0.3.4"
+  - "pytorch::pytorch=2.5.1=py3.12_cuda12.4*"
+  - "pytorch::pytorch-cuda=12.4"
+  - mkl<2024.1  # Older PyTorch binaries require MKL before the iJIT ABI change.
   - "bioconda::pod5=0.3.48"
   - "bioconda::lib-pod5=0.3.48"
   - pyarrow=22.0.0
   - numpy>=2.0
   - transformers>=4.40,<5
+  - accelerate>=1.0,<2
   - tqdm>=4.66
   - pysam>=0.22
   - scikit-learn>=1.5
   - scipy>=1.13
   - packaging>=23
-  - pip:
-      - --extra-index-url https://download.pytorch.org/whl/cu118
-      - torch==2.5.1+cu118
-      - accelerate>=1.0,<2
